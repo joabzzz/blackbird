@@ -12,9 +12,20 @@ It includes a chat UI with streaming responses, Markdown rendering with syntax h
 - Safe secrets: `.env` is loaded only on the server/desktop side
 - Clean UI: Markdown + code highlighting, copy/save actions, performance timing
 
-![Desktop preview](docs/desktop.png)
+### Desktop & iOS
 
-![iOS preview](docs/ios.png)
+<table>
+  <tr>
+    <td><img src="docs/desktop.png" alt="Desktop preview" width="360" /></td>
+    <td><img src="docs/ios.png" alt="iOS preview" width="240" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Desktop</sub></td>
+    <td align="center"><sub>iOS</sub></td>
+  </tr>
+</table>
+
+
 
 ---
 

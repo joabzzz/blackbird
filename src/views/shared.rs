@@ -1,17 +1,24 @@
+use comrak::plugins::syntect::SyntectAdapter;
+use comrak::{ComrakOptions, ComrakPlugins, markdown_to_html_with_plugins};
 use once_cell::sync::Lazy;
-use pulldown_cmark::{CodeBlockKind, CowStr, Event, Options, Parser, Tag, html};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
-use syntect::{highlighting::ThemeSet, html::highlighted_html_for_string, parsing::SyntaxSet};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::{fs, path::PathBuf};
 
 pub const SAVED_DOCS_DIR: &str = "cache/docs";
 
-static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
-static THEME_SET: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
+static MARKDOWN_OPTIONS: Lazy<ComrakOptions> = Lazy::new(|| {
+    let mut options = ComrakOptions::default();
+    options.extension.table = true;
+    options.extension.footnotes = true;
+    options.extension.strikethrough = true;
+    options.extension.tasklist = true;
+    options.render.unsafe_ = true;
+    options
+});
 
 #[derive(Clone, PartialEq)]
 pub struct SavedDoc {
@@ -61,68 +68,10 @@ fn capitalize_tag(word: &str) -> String {
 }
 
 pub fn markdown_to_html(md: &str) -> String {
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TABLES);
-    opts.insert(Options::ENABLE_FOOTNOTES);
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TASKLISTS);
-
-    let parser = Parser::new_ext(md, opts);
-
-    let mut in_code = false;
-    let mut code_lang: Option<String> = None;
-    let mut code_buf = String::new();
-    let mut events: Vec<Event> = Vec::new();
-
-    for ev in parser {
-        match ev {
-            Event::Start(Tag::CodeBlock(kind)) => {
-                in_code = true;
-                code_buf.clear();
-                code_lang = match kind {
-                    CodeBlockKind::Fenced(lang) => Some(lang.to_string()),
-                    _ => None,
-                };
-            }
-            Event::Text(text) if in_code => {
-                code_buf.push_str(&text);
-            }
-            Event::End(Tag::CodeBlock(_)) if in_code => {
-                let ss = &*SYNTAX_SET;
-                let ts = &*THEME_SET;
-                let theme = ts
-                    .themes
-                    .get("base16-ocean.dark")
-                    .or_else(|| ts.themes.values().next());
-                let lang = code_lang.as_deref().unwrap_or("");
-                let html_block: String = if let Some(theme) = theme {
-                    let syntax = ss
-                        .find_syntax_by_token(lang)
-                        .unwrap_or_else(|| ss.find_syntax_plain_text());
-                    match highlighted_html_for_string(&code_buf, ss, syntax, theme) {
-                        Ok(s) => s,
-                        Err(_) => escape_plain_code(&code_buf),
-                    }
-                } else {
-                    escape_plain_code(&code_buf)
-                };
-                events.push(Event::Html(CowStr::from(html_block)));
-                in_code = false;
-                code_lang = None;
-                code_buf.clear();
-            }
-            other if in_code => {
-                if let Event::Text(t) = other {
-                    code_buf.push_str(&t);
-                }
-            }
-            other => events.push(other),
-        }
-    }
-
-    let mut out = String::new();
-    html::push_html(&mut out, events.into_iter());
-    out
+    let adapter = SyntectAdapter::new(Some("base16-ocean.dark"));
+    let mut plugins = ComrakPlugins::default();
+    plugins.render.codefence_syntax_highlighter = Some(&adapter);
+    markdown_to_html_with_plugins(md, &MARKDOWN_OPTIONS, &plugins)
 }
 
 pub fn initial_saved_docs() -> Vec<SavedDoc> {
@@ -249,14 +198,6 @@ fn load_docs_from_disk() -> Vec<SavedDoc> {
 
     docs_with_time.sort_by(|a, b| b.0.cmp(&a.0));
     docs_with_time.into_iter().map(|(_, doc)| doc).collect()
-}
-
-fn escape_plain_code(code: &str) -> String {
-    let escaped = code
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
-    format!("<pre><code>{}</code></pre>", escaped)
 }
 
 fn current_timestamp() -> u64 {

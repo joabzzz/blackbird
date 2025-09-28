@@ -20,7 +20,9 @@ pub struct ChatMessage {
     pub role: Role,
     pub content: String,
     #[serde(skip)]
+    /// Only used for local timestamp display; upstream APIs ignore this field.
     pub created_at: Option<OffsetDateTime>,
     #[serde(skip)]
+    /// Local-only tags captured for saved documents, not part of LLM requests.
     pub tags: Vec<String>,
 }

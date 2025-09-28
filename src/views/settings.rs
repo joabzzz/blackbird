@@ -28,6 +28,15 @@ pub fn SettingsView(theme: Signal<ThemeMode>) -> Element {
                         onclick: move |_| theme.set(ThemeMode::Light),
                         "Light"
                     }
+                    button {
+                        class: format_args!(
+                            "theme-option {}",
+                            if matches!(theme(), ThemeMode::Octane) { "active" } else { "" }
+                        ),
+                        r#type: "button",
+                        onclick: move |_| theme.set(ThemeMode::Octane),
+                        "Octane"
+                    }
                 }
             }
             div { class: "settings-section",

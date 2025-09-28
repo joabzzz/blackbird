@@ -12,6 +12,7 @@ pub enum Role {
 pub enum ThemeMode {
     Dark,
     Light,
+    Octane,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -20,4 +21,6 @@ pub struct ChatMessage {
     pub content: String,
     #[serde(skip)]
     pub created_at: Option<OffsetDateTime>,
+    #[serde(skip)]
+    pub tags: Vec<String>,
 }

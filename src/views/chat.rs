@@ -13,6 +13,32 @@ struct MessagePerformance {
     tokens_per_second: f64,
 }
 
+fn summarize_performance(perf: &MessagePerformance) -> String {
+    let tokens = format!("{} tok", perf.token_count);
+    let rate = if perf.tokens_per_second >= 100.0 {
+        format!("{:.0} tok/s", perf.tokens_per_second)
+    } else {
+        format!("{:.1} tok/s", perf.tokens_per_second)
+    };
+    let time_secs = perf.duration_ms as f64 / 1000.0;
+    let duration = if time_secs >= 10.0 {
+        format!("{:.0}s", time_secs)
+    } else {
+        format!("{:.1}s", time_secs)
+    };
+    format!("{tokens} • {rate} • {duration}")
+}
+
+fn is_streaming_message(stream: Option<usize>, index: usize) -> bool {
+    matches!(stream, Some(idx) if idx == index)
+}
+
+fn is_pending_assistant(msg: &ChatMessage, stream: Option<usize>, index: usize) -> bool {
+    matches!(msg.role, Role::Assistant)
+        && is_streaming_message(stream, index)
+        && msg.content.is_empty()
+}
+
 fn estimate_token_count(content: &str) -> usize {
     let words = content
         .split_whitespace()
@@ -28,6 +54,90 @@ fn estimate_token_count(content: &str) -> usize {
 const MESSAGE_TIME_FORMAT: &[FormatItem<'static>] =
     format_description!("[hour repr:12 padding:zero]:[minute padding:zero] [period case:upper]");
 
+const DOC_TAG_SYSTEM_PROMPT: &str = r#"
+You are Blackbird, an AI writing partner that helps users draft and organize documents.
+When you respond, always include a final line in the exact format [[doc_tags: tag1, tag2, ...]].
+Choose 1-3 high-level document category tags that describe the type of document the user would file this as (e.g. Proposal, Meeting Notes, Product Brief, Technical Spec, Launch Plan, Research Summary, Checklist, FAQ).
+Avoid generic words from the response body; focus on the document intent.
+Do not include any additional text on the tag line beyond the brackets and comma-separated tags.
+If you cannot infer a type, use [[doc_tags: Notes]].
+"#;
+
+fn extract_doc_tags(content: &str) -> (String, Vec<String>) {
+    if let Some(start) = content.rfind("[[doc_tags:")
+        && let Some(end) = content[start..].find("]]")
+    {
+        let raw_tags = &content[start + "[[doc_tags:".len()..start + end];
+        let cleaned_content = content[..start].trim_end().to_string();
+        let tags = raw_tags
+            .split(',')
+            .filter_map(normalize_tag)
+            .collect::<Vec<_>>();
+        return (cleaned_content, tags);
+    }
+
+    (content.to_string(), Vec::new())
+}
+
+fn normalize_tag(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut chars = trimmed.chars();
+    let first = chars.next()?;
+    let mut tag = String::new();
+    tag.extend(first.to_uppercase());
+    let remainder = chars.as_str().to_lowercase();
+    tag.push_str(&remainder);
+    Some(tag)
+}
+
+fn fallback_doc_tags(content: &str) -> Vec<String> {
+    let text = content.to_lowercase();
+    let mut tags = Vec::new();
+    {
+        let mut add_tag = |label: &str| {
+            if !tags.iter().any(|existing| existing == label) {
+                tags.push(label.to_string());
+            }
+        };
+
+        if text.contains("meeting") || text.contains("standup") || text.contains("notes") {
+            add_tag("Meeting Notes");
+        }
+        if text.contains("plan") || text.contains("roadmap") || text.contains("timeline") {
+            add_tag("Project Plan");
+        }
+        if text.contains("proposal") || text.contains("pitch") {
+            add_tag("Proposal");
+        }
+        if text.contains("requirements") || text.contains("spec") || text.contains("specification")
+        {
+            add_tag("Technical Spec");
+        }
+        if text.contains("summary") || text.contains("overview") {
+            add_tag("Summary");
+        }
+        if text.contains("launch") || text.contains("release") {
+            add_tag("Launch Plan");
+        }
+        if text.contains("faq") || text.contains("question") {
+            add_tag("FAQ");
+        }
+        if text.contains("checklist") || text.contains("steps") {
+            add_tag("Checklist");
+        }
+        if text.contains("brief") {
+            add_tag("Product Brief");
+        }
+    }
+    if tags.is_empty() {
+        tags.push("Notes".to_string());
+    }
+    tags
+}
+
 fn current_time() -> OffsetDateTime {
     OffsetDateTime::now_utc()
 }
@@ -42,7 +152,7 @@ fn format_message_timestamp(timestamp: Option<OffsetDateTime>) -> Option<String>
 
 fn finalize_message_metrics(
     mut performances: Signal<Vec<Option<MessagePerformance>>>,
-    messages: Signal<Vec<ChatMessage>>,
+    mut messages: Signal<Vec<ChatMessage>>,
     mut processing_started_at: Signal<Option<Instant>>,
     index: usize,
 ) {
@@ -57,6 +167,10 @@ fn finalize_message_metrics(
             } else {
                 token_count as f64
             };
+            let (clean_content, mut tags) = extract_doc_tags(&content);
+            if tags.is_empty() {
+                tags = fallback_doc_tags(&content);
+            }
             performances.with_mut(|slots| {
                 if let Some(slot) = slots.get_mut(index) {
                     *slot = Some(MessagePerformance {
@@ -66,6 +180,12 @@ fn finalize_message_metrics(
                     });
                 }
             });
+            messages.with_mut(|msgs| {
+                if let Some(msg) = msgs.get_mut(index) {
+                    msg.content = clean_content;
+                    msg.tags = tags;
+                }
+            });
         }
     }
     processing_started_at.set(None);
@@ -73,45 +193,147 @@ fn finalize_message_metrics(
 
 #[component]
 pub fn ChatView(saved_docs: Signal<Vec<SavedDoc>>, base_font_px: Signal<i32>) -> Element {
-    let mut messages = use_signal(Vec::<ChatMessage>::new);
+    let messages = use_signal(Vec::<ChatMessage>::new);
     let mut input = use_signal(String::new);
-    let mut sending = use_signal(|| false);
-    let mut streaming_index = use_signal(|| Option::<usize>::None);
-    let mut performances = use_signal(Vec::<Option<MessagePerformance>>::new);
-    let mut processing_started_at = use_signal(|| Option::<Instant>::None);
+    let sending = use_signal(|| false);
+    let streaming_index = use_signal(|| Option::<usize>::None);
+    let performances = use_signal(Vec::<Option<MessagePerformance>>::new);
+    let processing_started_at = use_signal(|| Option::<Instant>::None);
     let scroll_to_bottom = || {};
+
+    let mut send_message = {
+        let mut messages = messages;
+        let mut performances = performances;
+        let mut streaming_index = streaming_index;
+        let mut processing_started_at = processing_started_at;
+        let mut sending_signal = sending;
+        let mut input_signal = input;
+        move |text: String| {
+            let trimmed = text.trim();
+            if trimmed.is_empty() || sending_signal() {
+                return;
+            }
+
+            messages.with_mut(|msgs| {
+                msgs.push(ChatMessage {
+                    role: Role::User,
+                    content: trimmed.to_string(),
+                    created_at: Some(current_time()),
+                    tags: Vec::new(),
+                });
+            });
+            performances.with_mut(|slots| slots.push(None));
+            scroll_to_bottom();
+            input_signal.set(String::new());
+
+            let conversation_snapshot = messages();
+
+            sending_signal.set(true);
+            let mut inserted_index = 0;
+            messages.with_mut(|msgs| {
+                inserted_index = msgs.len();
+                msgs.push(ChatMessage {
+                    role: Role::Assistant,
+                    content: String::new(),
+                    created_at: Some(current_time()),
+                    tags: Vec::new(),
+                });
+            });
+            performances.with_mut(|slots| slots.push(None));
+            streaming_index.set(Some(inserted_index));
+            processing_started_at.set(Some(Instant::now()));
+
+            let mut server_messages = Vec::with_capacity(conversation_snapshot.len() + 1);
+            server_messages.push(ChatMessage {
+                role: Role::User,
+                content: DOC_TAG_SYSTEM_PROMPT.to_string(),
+                created_at: None,
+                tags: Vec::new(),
+            });
+            server_messages.extend(conversation_snapshot);
+
+            let performance_signal = performances;
+            let metrics_messages = messages;
+            let metrics_started_at = processing_started_at;
+            spawn(async move {
+                match chat_reply_stream_start(server_messages).await {
+                    Ok(stream_id) => loop {
+                        match chat_reply_stream_poll(stream_id).await {
+                            Ok((content, done)) => {
+                                messages.with_mut(|msgs| {
+                                    if let Some(msg) = msgs.get_mut(inserted_index) {
+                                        msg.content = content.clone();
+                                    }
+                                });
+                                scroll_to_bottom();
+                                if done {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                eprintln!("stream poll error: {}", err);
+                                break;
+                            }
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                    },
+                    Err(err) => eprintln!("chat start error: {}", err),
+                }
+                finalize_message_metrics(
+                    performance_signal,
+                    metrics_messages,
+                    metrics_started_at,
+                    inserted_index,
+                );
+                streaming_index.set(None);
+                sending_signal.set(false);
+            });
+        }
+    };
+
+    let messages_snapshot = messages();
+    let performance_snapshot = performances();
+    let current_stream = streaming_index();
 
     rsx! {
         div { class: "main-container",
             div { class: "chat-wrap",
                 div { id: "chat-list", class: "chat-list",
-                    for (i, msg) in messages().iter().enumerate() {
+                    for (i, msg) in messages_snapshot.iter().enumerate() {
                         div { class: format_args!("message-row {}", match msg.role { Role::User => "user", Role::Assistant => "assistant" }),
                             if matches!(msg.role, Role::Assistant) { div { class: "avatar assistant", "C" } }
                             div { class: "message-stack",
-                                div { class: format_args!(
-                                        "bubble {} {}",
-                                        match msg.role { Role::User => "user", Role::Assistant => "assistant" },
-                                        if matches!(msg.role, Role::Assistant)
-                                            && matches!(streaming_index(), Some(idx) if idx == i)
-                                            && msg.content.is_empty() { "pending" } else { "" }
-                                    ),
-                                    if matches!(msg.role, Role::Assistant) {
-                                        AssistantBubble {
-                                            content: msg.content.clone(),
-                                            show_copy: match streaming_index() { Some(idx) => idx != i, None => true },
-                                            performance: performances().get(i).cloned().unwrap_or(None),
-                                            is_streaming: matches!(streaming_index(), Some(idx) if idx == i),
-                                            saved_docs,
-                                        }
-                                    } else { "{msg.content}" }
+                                if is_pending_assistant(msg, current_stream, i) {
+                                    div { class: "shimmer-line",
+                                        span { class: "shimmer-text", "Processing…" }
+                                    }
+                                } else {
+                                    div { class: format_args!(
+                                            "bubble {}",
+                                            match msg.role { Role::User => "user", Role::Assistant => "assistant" },
+                                        ),
+                                        if matches!(msg.role, Role::Assistant) {
+                                            AssistantBubble {
+                                                content: msg.content.clone(),
+                                                show_copy: match current_stream { Some(idx) => idx != i, None => true },
+                                                is_streaming: is_streaming_message(current_stream, i),
+                                                tags: msg.tags.clone(),
+                                                saved_docs,
+                                            }
+                                        } else { "{msg.content}" }
+                                    }
                                 }
                                 if let Some(ts) = format_message_timestamp(msg.created_at) {
-                                    span { class: format_args!(
-                                            "message-timestamp {}",
+                                    div { class: format_args!(
+                                            "message-meta {}",
                                             match msg.role { Role::User => "align-end", Role::Assistant => "align-start" }
                                         ),
-                                        "{ts}"
+                                        span { class: "message-timestamp", "{ts}" }
+                                        if matches!(msg.role, Role::Assistant) {
+                                            if let Some(perf) = performance_snapshot.get(i).copied().flatten() {
+                                                span { class: "message-metrics", "{summarize_performance(&perf)}" }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -141,59 +363,8 @@ pub fn ChatView(saved_docs: Signal<Vec<SavedDoc>>, base_font_px: Signal<i32>) ->
                                 }
                                 if ev.key() == Key::Enter && !ev.modifiers().shift() {
                                     ev.prevent_default();
-                                    let text = input().trim().to_string();
-                                    if text.is_empty() || sending() { return; }
-                                    messages.with_mut(|msgs| msgs.push(ChatMessage {
-                                        role: Role::User,
-                                        content: text.clone(),
-                                        created_at: Some(current_time()),
-                                    }));
-                                    performances.with_mut(|ts| ts.push(None));
-                                    scroll_to_bottom();
-                                    input.set(String::new());
-                                    sending.set(true);
-                                    let mut inserted_index: usize = 0;
-                                    messages.with_mut(|msgs| {
-                                        inserted_index = msgs.len();
-                                        msgs.push(ChatMessage {
-                                            role: Role::Assistant,
-                                            content: String::new(),
-                                            created_at: Some(current_time()),
-                                        });
-                                    });
-                                    performances.with_mut(|ts| ts.push(None));
-                                    streaming_index.set(Some(inserted_index));
-                                    processing_started_at.set(Some(Instant::now()));
-                                    let msgs_for_server = messages();
-                                    let performance_signal = performances;
-                                    let metrics_messages = messages;
-                                    let metrics_started_at = processing_started_at;
-                                    spawn(async move {
-                                        match chat_reply_stream_start(msgs_for_server).await {
-                                            Ok(stream_id) => {
-                                                loop {
-                                                    match chat_reply_stream_poll(stream_id).await {
-                                                        Ok((content, done)) => {
-                                                            messages.with_mut(|msgs| if let Some(msg) = msgs.get_mut(inserted_index) { msg.content = content.clone(); });
-                                                            scroll_to_bottom();
-                                                            if done { break; }
-                                                        }
-                                                        Err(err) => { eprintln!("stream poll error: {}", err); break; }
-                                                    }
-                                                    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-                                                }
-                                            }
-                                            Err(err) => eprintln!("chat start error: {}", err),
-                                        }
-                                        finalize_message_metrics(
-                                            performance_signal,
-                                            metrics_messages,
-                                            metrics_started_at,
-                                            inserted_index,
-                                        );
-                                        streaming_index.set(None);
-                                        sending.set(false);
-                                    });
+                                    let text = input();
+                                    send_message(text);
                                 }
                             },
                             disabled: sending(), autofocus: true,
@@ -202,59 +373,8 @@ pub fn ChatView(saved_docs: Signal<Vec<SavedDoc>>, base_font_px: Signal<i32>) ->
                             class: "btn btn-primary", r#type: "button",
                             disabled: sending() || input().trim().is_empty(),
                             onclick: move |_| {
-                                let text = input().trim().to_string();
-                                if text.is_empty() || sending() { return; }
-                                messages.with_mut(|msgs| msgs.push(ChatMessage {
-                                    role: Role::User,
-                                    content: text.clone(),
-                                    created_at: Some(current_time()),
-                                }));
-                                performances.with_mut(|ts| ts.push(None));
-                                scroll_to_bottom();
-                                input.set(String::new());
-                                sending.set(true);
-                                let mut inserted_index: usize = 0;
-                                messages.with_mut(|msgs| {
-                                    inserted_index = msgs.len();
-                                    msgs.push(ChatMessage {
-                                        role: Role::Assistant,
-                                        content: String::new(),
-                                        created_at: Some(current_time()),
-                                    });
-                                });
-                                performances.with_mut(|ts| ts.push(None));
-                                streaming_index.set(Some(inserted_index));
-                                processing_started_at.set(Some(Instant::now()));
-                                let msgs_for_server = messages();
-                                let performance_signal = performances;
-                                let metrics_messages = messages;
-                                let metrics_started_at = processing_started_at;
-                                spawn(async move {
-                                    match chat_reply_stream_start(msgs_for_server).await {
-                                        Ok(stream_id) => {
-                                            loop {
-                                                match chat_reply_stream_poll(stream_id).await {
-                                                    Ok((content, done)) => {
-                                                        messages.with_mut(|msgs| if let Some(msg) = msgs.get_mut(inserted_index) { msg.content = content.clone(); });
-                                                        scroll_to_bottom();
-                                                        if done { break; }
-                                                    }
-                                                    Err(err) => { eprintln!("stream poll error: {}", err); break; }
-                                                }
-                                                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-                                            }
-                                            }
-                                            Err(err) => eprintln!("chat start error: {}", err),
-                                    }
-                                    finalize_message_metrics(
-                                        performance_signal,
-                                        metrics_messages,
-                                        metrics_started_at,
-                                        inserted_index,
-                                    );
-                                    streaming_index.set(None);
-                                    sending.set(false);
-                                });
+                                let text = input();
+                                send_message(text);
                             },
                             "Send"
                         }
@@ -269,12 +389,13 @@ pub fn ChatView(saved_docs: Signal<Vec<SavedDoc>>, base_font_px: Signal<i32>) ->
 fn AssistantBubble(
     content: String,
     show_copy: bool,
-    performance: Option<MessagePerformance>,
     is_streaming: bool,
+    tags: Vec<String>,
     saved_docs: Signal<Vec<SavedDoc>>,
 ) -> Element {
     let content_html = markdown_to_html(&content);
     let copy_payload = content.clone();
+    let display_tags = tags.clone();
     let on_copy = move |_| {
         let raw = copy_payload.clone();
         spawn(async move {
@@ -287,26 +408,11 @@ fn AssistantBubble(
         });
     };
 
-    let performance_metrics = performance.map(|perf| {
-        let time_secs = (perf.duration_ms as f64) / 1000.0;
-        let rate = if perf.tokens_per_second >= 100.0 {
-            format!("{:.0} tok/s", perf.tokens_per_second)
-        } else {
-            format!("{:.1} tok/s", perf.tokens_per_second)
-        };
-        let duration = if time_secs >= 10.0 {
-            format!("{:.0}s", time_secs)
-        } else {
-            format!("{:.1}s", time_secs)
-        };
-        (format!("{} tok", perf.token_count), rate, duration)
-    });
-    let metrics = performance_metrics;
-
     let save_payload = content.clone();
+    let save_tags = tags.clone();
     let on_save = move |_| {
         let raw = save_payload.clone();
-        if let Some(doc) = persist_markdown_doc(&raw) {
+        if let Some(doc) = persist_markdown_doc(&raw, Some(&save_tags)) {
             saved_docs.with_mut(|docs| {
                 docs.retain(|existing| existing.id != doc.id);
             });
@@ -317,16 +423,16 @@ fn AssistantBubble(
     rsx! {
         if show_copy {
             div { class: "bubble-controls",
-                if let Some((tokens, rate, duration)) = metrics.as_ref() {
-                    div { class: "bubble-metrics",
-                        span { class: "metric-pill", "{tokens}" }
-                        span { class: "metric-pill", "{rate}" }
-                        span { class: "metric-pill", "{duration}" }
-                    }
-                }
                 div { class: "actions",
                     button { class: "action-btn", title: "Copy markdown", onclick: on_copy, "Copy" }
                     button { class: "action-btn", title: "Save", onclick: on_save, "Save" }
+                }
+            }
+        }
+        if !display_tags.is_empty() {
+            div { class: "bubble-tags",
+                for tag in display_tags.iter() {
+                    span { class: "tag-pill tag-pill-compact", "{tag}" }
                 }
             }
         }

@@ -1,5 +1,6 @@
 use once_cell::sync::Lazy;
 use pulldown_cmark::{CodeBlockKind, CowStr, Event, Options, Parser, Tag, html};
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use syntect::{highlighting::ThemeSet, html::highlighted_html_for_string, parsing::SyntaxSet};
@@ -19,6 +20,44 @@ pub struct SavedDoc {
     pub content: String,
     pub file_path: Option<String>,
     pub created_at: u64,
+    pub tags: Vec<String>,
+}
+
+const STOPWORDS: &[&str] = &[
+    "the", "and", "that", "with", "have", "this", "from", "there", "would", "could", "should",
+    "about", "into", "while", "where", "which", "their", "them", "they", "been", "after", "before",
+    "because", "given", "using", "based", "over", "under", "through", "among",
+];
+
+pub fn generate_tags(text: &str) -> Vec<String> {
+    let mut frequencies: HashMap<String, usize> = HashMap::new();
+
+    for word in text.split(|c: char| c.is_whitespace()) {
+        let cleaned = word
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
+        if cleaned.len() < 4 || STOPWORDS.contains(&cleaned.as_str()) {
+            continue;
+        }
+        *frequencies.entry(cleaned).or_insert(0) += 1;
+    }
+
+    let mut items: Vec<(String, usize)> = frequencies.into_iter().collect();
+    items.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    items
+        .into_iter()
+        .take(4)
+        .map(|(word, _)| capitalize_tag(&word))
+        .collect()
+}
+
+fn capitalize_tag(word: &str) -> String {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
 }
 
 pub fn markdown_to_html(md: &str) -> String {
@@ -98,7 +137,7 @@ pub fn initial_saved_docs() -> Vec<SavedDoc> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn persist_markdown_doc(content: &str) -> Option<SavedDoc> {
+pub fn persist_markdown_doc(content: &str, tags_override: Option<&[String]>) -> Option<SavedDoc> {
     if content.trim().is_empty() {
         return None;
     }
@@ -122,29 +161,39 @@ pub fn persist_markdown_doc(content: &str) -> Option<SavedDoc> {
         return None;
     }
     let path_str = path.to_string_lossy().into_owned();
+    let tags = match tags_override {
+        Some(tags) if !tags.is_empty() => tags.to_vec(),
+        _ => generate_tags(content),
+    };
     Some(SavedDoc {
         id: path_str.clone(),
         title,
         content: content.to_string(),
         file_path: Some(path_str),
         created_at: timestamp,
+        tags,
     })
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn persist_markdown_doc(content: &str) -> Option<SavedDoc> {
+pub fn persist_markdown_doc(content: &str, tags_override: Option<&[String]>) -> Option<SavedDoc> {
     if content.trim().is_empty() {
         return None;
     }
 
     let timestamp = current_timestamp();
     let title = extract_title(content, "Untitled");
+    let tags = match tags_override {
+        Some(tags) if !tags.is_empty() => tags.to_vec(),
+        _ => generate_tags(content),
+    };
     Some(SavedDoc {
         id: format!("mem-{}", timestamp),
         title,
         content: content.to_string(),
         file_path: None,
         created_at: timestamp,
+        tags,
     })
 }
 
@@ -176,6 +225,7 @@ fn load_docs_from_disk() -> Vec<SavedDoc> {
                     .and_then(|stem| stem.to_str())
                     .unwrap_or("Untitled");
                 let title = extract_title(&content, fallback);
+                let tags = generate_tags(&content);
                 let timestamp = entry
                     .metadata()
                     .ok()
@@ -190,6 +240,7 @@ fn load_docs_from_disk() -> Vec<SavedDoc> {
                     content,
                     file_path: Some(path_str),
                     created_at: timestamp,
+                    tags,
                 };
                 docs_with_time.push((doc.created_at, doc));
             }

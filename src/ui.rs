@@ -1,328 +1,173 @@
-use crate::ai::{chat_reply_stream_poll, chat_reply_stream_start};
-use crate::types::{ChatMessage, Role};
-use dioxus::events::Key;
+use crate::types::ThemeMode;
+use crate::views::shared::initial_saved_docs;
+use crate::views::{ChatView, DocsView, SettingsView};
 use dioxus::prelude::*;
-use once_cell::sync::Lazy;
-use pulldown_cmark::{CodeBlockKind, CowStr, Event, Options, Parser, Tag, html};
-use std::time::Instant;
-use syntect::{highlighting::ThemeSet, html::highlighted_html_for_string, parsing::SyntaxSet};
-
-static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
-static THEME_SET: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
-
-pub fn markdown_to_html(md: &str) -> String {
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TABLES);
-    opts.insert(Options::ENABLE_FOOTNOTES);
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TASKLISTS);
-
-    let parser = Parser::new_ext(md, opts);
-
-    // Transform code blocks to syntax-highlighted HTML
-    let mut in_code = false;
-    let mut code_lang: Option<String> = None;
-    let mut code_buf = String::new();
-    let mut events: Vec<Event> = Vec::new();
-
-    for ev in parser {
-        match ev {
-            Event::Start(Tag::CodeBlock(kind)) => {
-                in_code = true;
-                code_buf.clear();
-                code_lang = match kind {
-                    CodeBlockKind::Fenced(lang) => Some(lang.to_string()),
-                    _ => None,
-                };
-            }
-            Event::Text(text) if in_code => {
-                code_buf.push_str(&text);
-            }
-            Event::End(Tag::CodeBlock(_)) if in_code => {
-                // Highlight and inject as raw HTML
-                let ss = &*SYNTAX_SET;
-                let ts = &*THEME_SET;
-                let theme = ts
-                    .themes
-                    .get("base16-ocean.dark")
-                    .or_else(|| ts.themes.values().next());
-                let lang = code_lang.as_deref().unwrap_or("");
-                let html_block: String = if let Some(theme) = theme {
-                    let syntax = ss
-                        .find_syntax_by_token(lang)
-                        .unwrap_or_else(|| ss.find_syntax_plain_text());
-                    match highlighted_html_for_string(&code_buf, ss, syntax, theme) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            let escaped = code_buf
-                                .replace('&', "&amp;")
-                                .replace('<', "&lt;")
-                                .replace('>', "&gt;");
-                            format!("<pre><code>{}</code></pre>", escaped)
-                        }
-                    }
-                } else {
-                    let escaped = code_buf
-                        .replace('&', "&amp;")
-                        .replace('<', "&lt;")
-                        .replace('>', "&gt;");
-                    format!("<pre><code>{}</code></pre>", escaped)
-                };
-                events.push(Event::Html(CowStr::from(html_block)));
-                in_code = false;
-                code_lang = None;
-                code_buf.clear();
-            }
-            other if in_code => {
-                if let Event::Text(t) = other {
-                    code_buf.push_str(&t);
-                }
-            }
-            other => events.push(other),
-        }
-    }
-
-    let mut out = String::new();
-    html::push_html(&mut out, events.into_iter());
-    out
-}
-
-#[component]
-pub fn AssistantBubble(
-    content: String,
-    show_copy: bool,
-    processed_time_ms: Option<u128>,
-    is_streaming: bool,
-    saved_msgs: Signal<Vec<String>>,
-) -> Element {
-    let content_html = markdown_to_html(&content);
-    let copy_payload = content.clone();
-    let on_copy = move |_| {
-        let raw = copy_payload.clone();
-        spawn(async move {
-            #[cfg(any(feature = "desktop", feature = "mobile"))]
-            {
-                if let Ok(mut cb) = arboard::Clipboard::new() {
-                    let _ = cb.set_text(raw);
-                }
-            }
-        });
-    };
-
-    // Convert ms to seconds with one decimal and build label
-    let processed_label = processed_time_ms
-        .map(|ms| (ms as f64) / 1000.0)
-        .map(|s| format!("Processed in {:.1}s", s));
-
-    // Save handler: push markdown into in-memory list
-    let save_payload = content.clone();
-    let on_save = move |_| {
-        let raw = save_payload.clone();
-        saved_msgs.with_mut(|arr| arr.push(raw));
-    };
-
-    rsx! {
-        if show_copy {
-            div { class: "bubble-controls",
-                if let Some(lbl) = processed_label { span { class: "processed-time", "{lbl}" } }
-                button { class: "action-btn", title: "Copy markdown", onclick: on_copy, "Copy" }
-                button { class: "action-btn", title: "Save", onclick: on_save, "Save" }
-            }
-        }
-        if is_streaming && content.is_empty() {
-            div { class: "md", div { class: "shimmer-text", "Processing…" } }
-        } else {
-            div { class: "md", dangerous_inner_html: "{content_html}" }
-        }
-    }
-}
+use std::time::Duration;
 
 const MOSTRA_CSS: Asset = asset!("/assets/mostra.css");
+const SPLASH_LOGO: Asset = asset!("/assets/blackbird_logo_1024.png");
+const SPLASH_TITLE: Asset = asset!("/assets/blackbird-title.png");
+const SPLASH_HIDE_DELAY: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AppTab {
+    Chat,
+    Docs,
+    Settings,
+}
 
 #[component]
 pub fn App() -> Element {
-    // Saved messages live for the session
-    let saved_msgs = use_signal(Vec::<String>::new);
-    let mut base_font_px = use_signal(|| 14i32);
+    let saved_docs = use_signal(initial_saved_docs);
+    let mut active_tab = use_signal(|| AppTab::Chat);
+    let base_font_px = use_signal(|| 14i32);
+    let theme = use_signal(|| ThemeMode::Dark);
+    let show_splash = use_signal(|| true);
+
+    use_effect(move || {
+        if show_splash() {
+            let mut show_splash_signal = show_splash;
+            spawn(async move {
+                tokio::time::sleep(SPLASH_HIDE_DELAY).await;
+                show_splash_signal.set(false);
+            });
+        }
+    });
+
+    let root_style = format!(":root {{ font-size: {}px; }}", base_font_px());
+    let theme_css = theme_styles(theme());
 
     rsx! {
         document::Link { rel: "stylesheet", href: MOSTRA_CSS }
-        // Dynamically scale base font size
-        {
-            let root_style = format!(":root {{ font-size: {}px; }}", base_font_px());
-            rsx!( style { dangerous_inner_html: "{root_style}" } )
+        style { dangerous_inner_html: "{root_style}" }
+        style { dangerous_inner_html: "{theme_css}" }
+        if show_splash() {
+            SplashScreen {}
         }
-        // Header title
         div { class: "header no-divider",
             div { class: "header-content",
-                h1 { class: "tab active", "Chat" }
-            }
-        }
-
-        Chat { saved_msgs, base_font_px }
-    }
-}
-
-#[component]
-fn Setting() -> Element {
-    rsx! {
-        div { class: "main-container",
-            h2 { class: "page-title text-xl", "Setting" }
-            p { class: "text-muted", "Coming soon." }
-        }
-    }
-}
-
-#[component]
-fn Chat(saved_msgs: Signal<Vec<String>>, base_font_px: Signal<i32>) -> Element {
-    let mut messages = use_signal(Vec::<ChatMessage>::new);
-    let mut input = use_signal(String::new);
-    let mut sending = use_signal(|| false);
-    let mut streaming_index = use_signal(|| Option::<usize>::None);
-    let mut processed_times = use_signal(Vec::<Option<u128>>::new);
-    let mut processing_started_at = use_signal(|| Option::<Instant>::None);
-    let scroll_to_bottom = || {};
-
-    rsx! {
-        div { class: "main-container",
-            div { class: "chat-wrap",
-                div { id: "chat-list", class: "chat-list",
-                    for (i, msg) in messages().iter().enumerate() {
-                        div { class: format_args!("message-row {}", match msg.role { Role::User => "user", Role::Assistant => "assistant" }),
-                            if matches!(msg.role, Role::Assistant) { div { class: "avatar assistant", "C" } }
-                            div { class: format_args!(
-                                    "bubble {} {}",
-                                    match msg.role { Role::User => "user", Role::Assistant => "assistant" },
-                                    if matches!(msg.role, Role::Assistant)
-                                        && matches!(streaming_index(), Some(idx) if idx == i)
-                                        && msg.content.is_empty() { "pending" } else { "" }
-                                ),
-                                if matches!(msg.role, Role::Assistant) {
-                                    AssistantBubble {
-                                        content: msg.content.clone(),
-                                        show_copy: match streaming_index() { Some(idx) => idx != i, None => true },
-                                        processed_time_ms: processed_times().get(i).cloned().unwrap_or(None),
-                                        is_streaming: matches!(streaming_index(), Some(idx) if idx == i),
-                                        saved_msgs,
-                                    }
-                                } else { "{msg.content}" }
-                            }
-                        }
+                div { class: "tabs",
+                    h1 {
+                        class: if active_tab() == AppTab::Chat { "tab active" } else { "tab" },
+                        onclick: move |_| active_tab.set(AppTab::Chat),
+                        "Chat"
                     }
-                }
-            }
-
-            form { class: "composer no-divider",
-                div { class: "composer-inner",
-                    div { class: "hstack", style: "gap: 0.5rem; width: 100%; align-items: flex-end;",
-                        textarea {
-                            class: "", rows: "1", placeholder: "What can I help you with?",
-                            value: "{input}", oninput: move |ev| input.set(ev.value()),
-                            onkeydown: move |ev| {
-                                // Zoom via Cmd/Ctrl + and -
-                                if ev.modifiers().meta() || ev.modifiers().ctrl() {
-                                    if ev.key() == Key::Character("+".into()) || ev.key() == Key::Character("=".into()) {
-                                        ev.prevent_default();
-                                        base_font_px.set((base_font_px() + 1).clamp(12, 22));
-                                        return;
-                                    }
-                                    if ev.key() == Key::Character("-".into()) {
-                                        ev.prevent_default();
-                                        base_font_px.set((base_font_px() - 1).clamp(12, 22));
-                                        return;
-                                    }
-                                }
-                                if ev.key() == Key::Enter && !ev.modifiers().shift() {
-                                    ev.prevent_default();
-                                    let text = input().trim().to_string();
-                                    if text.is_empty() || sending() { return; }
-                                    messages.with_mut(|msgs| msgs.push(ChatMessage { role: Role::User, content: text.clone() }));
-                                    processed_times.with_mut(|ts| ts.push(None));
-                                    scroll_to_bottom();
-                                    input.set(String::new());
-                                    sending.set(true);
-                                    let mut inserted_index: usize = 0;
-                                    messages.with_mut(|msgs| { inserted_index = msgs.len(); msgs.push(ChatMessage { role: Role::Assistant, content: String::new() }); });
-                                    processed_times.with_mut(|ts| ts.push(None));
-                                    streaming_index.set(Some(inserted_index));
-                                    processing_started_at.set(Some(Instant::now()));
-                                    let msgs_for_server = messages();
-                                    spawn(async move {
-                                        match chat_reply_stream_start(msgs_for_server).await {
-                                            Ok(stream_id) => {
-                                                loop {
-                                                    match chat_reply_stream_poll(stream_id).await {
-                                                        Ok((content, done)) => {
-                                                            messages.with_mut(|msgs| if let Some(msg) = msgs.get_mut(inserted_index) { msg.content = content.clone(); });
-                                                            scroll_to_bottom();
-                                                            if done { break; }
-                                                        }
-                                                        Err(err) => { eprintln!("stream poll error: {}", err); break; }
-                                                    }
-                                                    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-                                                }
-                                            }
-                                            Err(err) => eprintln!("chat start error: {}", err),
-                                        }
-                                        // Capture processed time
-                                        if let Some(start) = processing_started_at() {
-                                            let ms = start.elapsed().as_millis();
-                                            processed_times.with_mut(|ts| if let Some(slot) = ts.get_mut(inserted_index) { *slot = Some(ms); });
-                                        }
-                                        streaming_index.set(None);
-                                        sending.set(false);
-                                    });
-                                }
-                            },
-                            disabled: sending(), autofocus: true,
-                        }
-                        button {
-                            class: "btn btn-primary", r#type: "button",
-                            disabled: sending() || input().trim().is_empty(),
-                            onclick: move |_| {
-                                let text = input().trim().to_string();
-                                if text.is_empty() || sending() { return; }
-                                messages.with_mut(|msgs| msgs.push(ChatMessage { role: Role::User, content: text.clone() }));
-                                processed_times.with_mut(|ts| ts.push(None));
-                                scroll_to_bottom();
-                                input.set(String::new());
-                                sending.set(true);
-                                let mut inserted_index: usize = 0;
-                                messages.with_mut(|msgs| { inserted_index = msgs.len(); msgs.push(ChatMessage { role: Role::Assistant, content: String::new() }); });
-                                processed_times.with_mut(|ts| ts.push(None));
-                                streaming_index.set(Some(inserted_index));
-                                processing_started_at.set(Some(Instant::now()));
-                                let msgs_for_server = messages();
-                                spawn(async move {
-                                    match chat_reply_stream_start(msgs_for_server).await {
-                                        Ok(stream_id) => {
-                                            loop {
-                                                match chat_reply_stream_poll(stream_id).await {
-                                                    Ok((content, done)) => {
-                                                        messages.with_mut(|msgs| if let Some(msg) = msgs.get_mut(inserted_index) { msg.content = content.clone(); });
-                                                        scroll_to_bottom();
-                                                        if done { break; }
-                                                    }
-                                                    Err(err) => { eprintln!("stream poll error: {}", err); break; }
-                                                }
-                                                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-                                            }
-                                        }
-                                        Err(err) => eprintln!("chat start error: {}", err),
-                                    }
-                                    if let Some(start) = processing_started_at() {
-                                        let ms = start.elapsed().as_millis();
-                                        processed_times.with_mut(|ts| if let Some(slot) = ts.get_mut(inserted_index) { *slot = Some(ms); });
-                                    }
-                                    streaming_index.set(None);
-                                    sending.set(false);
-                                });
-                            },
-                            "Send"
-                        }
+                    h1 {
+                        class: if active_tab() == AppTab::Docs { "tab active" } else { "tab" },
+                        onclick: move |_| active_tab.set(AppTab::Docs),
+                        "Docs"
+                    }
+                    h1 {
+                        class: if active_tab() == AppTab::Settings { "tab active" } else { "tab" },
+                        onclick: move |_| active_tab.set(AppTab::Settings),
+                        "Settings"
                     }
                 }
             }
         }
+
+        div { class: "tab-panels",
+            div {
+                class: format_args!(
+                    "tab-panel {}",
+                    if active_tab() == AppTab::Chat { "active" } else { "" }
+                ),
+                aria_hidden: (active_tab() != AppTab::Chat).to_string(),
+                ChatView { saved_docs, base_font_px }
+            }
+            div {
+                class: format_args!(
+                    "tab-panel {}",
+                    if active_tab() == AppTab::Docs { "active" } else { "" }
+                ),
+                aria_hidden: (active_tab() != AppTab::Docs).to_string(),
+                DocsView { saved_docs }
+            }
+            div {
+                class: format_args!(
+                    "tab-panel {}",
+                    if active_tab() == AppTab::Settings { "active" } else { "" }
+                ),
+                aria_hidden: (active_tab() != AppTab::Settings).to_string(),
+                SettingsView { theme }
+            }
+        }
+    }
+}
+
+#[component]
+fn SplashScreen() -> Element {
+    rsx! {
+        div { class: "splash-overlay", aria_hidden: "true",
+            div { class: "splash-content",
+                img { class: "splash-logo", src: SPLASH_LOGO, alt: "Blackbird logo" }
+                img { class: "splash-title", src: SPLASH_TITLE, alt: "Blackbird wordmark" }
+            }
+        }
+    }
+}
+
+fn theme_styles(theme: ThemeMode) -> String {
+    match theme {
+        ThemeMode::Dark => r#"
+:root {
+    --color-bg-primary: #000000;
+    --color-bg-secondary: #050505;
+    --color-bg-overlay: rgba(0, 0, 0, 0.9);
+    --color-text-primary: #ffffff;
+    --color-text-secondary: #ffffff;
+    --color-text-muted: #cfcfcf;
+    --color-border: #ffffff;
+    --color-surface-muted: #111111;
+    --color-input-border: #2a2a2a;
+    --color-input-bg: #000000;
+    --color-chat-user-bg: #ffffff;
+    --color-chat-user-text: #000000;
+    --color-chat-assistant-bg: #000000;
+    --color-chat-assistant-text: #ffffff;
+    --color-doc-card-border: #2a2a2a;
+    --color-doc-card-hover: #ffffff;
+    --color-doc-viewer-bg: rgba(255, 255, 255, 0.02);
+    --color-timestamp: #9b9b9b;
+}
+body { background: var(--color-bg-primary); color: var(--color-text-primary); }
+.header { background: var(--color-bg-primary); }
+.btn:hover,
+.btn-ghost:hover { background: var(--color-surface-muted); }
+.composer textarea { background: var(--color-input-bg); color: var(--color-text-primary); border-color: var(--color-input-border); }
+.composer textarea:focus { border-color: var(--color-border); }
+.doc-viewer { background: transparent; }
+"#.to_string(),
+        ThemeMode::Light => r#"
+:root {
+    --color-bg-primary: #ffffff;
+    --color-bg-secondary: #f5f5f5;
+    --color-bg-overlay: rgba(255, 255, 255, 0.92);
+    --color-text-primary: #000000;
+    --color-text-secondary: #000000;
+    --color-text-muted: #4a4a4a;
+    --color-border: #000000;
+    --color-surface-muted: #e6e6e6;
+    --color-input-border: #c2c2c2;
+    --color-input-bg: #ffffff;
+    --color-chat-user-bg: #111111;
+    --color-chat-user-text: #ffffff;
+    --color-chat-assistant-bg: #ffffff;
+    --color-chat-assistant-text: #000000;
+    --color-doc-card-border: #d0d0d0;
+    --color-doc-card-hover: #000000;
+    --color-doc-viewer-bg: rgba(0, 0, 0, 0.04);
+    --color-timestamp: #606060;
+}
+body { background: var(--color-bg-primary); color: var(--color-text-primary); }
+.header { background: var(--color-bg-primary); }
+.btn { color: var(--color-text-primary); }
+.btn:hover,
+.btn-ghost:hover { background: var(--color-surface-muted); }
+.composer { background: var(--color-bg-overlay); border-top-color: var(--color-border); }
+.composer textarea { background: var(--color-input-bg); color: var(--color-text-primary); border-color: var(--color-input-border); }
+.composer textarea:focus { border-color: var(--color-border); }
+.doc-viewer { background: var(--color-doc-viewer-bg); }
+"#.to_string(),
     }
 }

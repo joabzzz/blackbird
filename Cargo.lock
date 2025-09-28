@@ -266,6 +266,7 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "dioxus",
+ "dioxus-signals",
  "dotenvy",
  "futures-util",
  "once_cell",
@@ -274,6 +275,7 @@ dependencies = [
  "serde",
  "serde_json",
  "syntect",
+ "time",
  "tokio",
 ]
 
@@ -898,7 +900,6 @@ dependencies = [
  "dioxus-signals",
  "dioxus-web",
  "manganis",
- "serde",
  "warnings",
 ]
 
@@ -3024,6 +3025,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_threads"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c7398b9c8b70908f6371f47ed36737907c87c52af34c268fed0bf0ceb92ead9"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4768,7 +4778,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83bde6f1ec10e72d583d91623c939f623002284ef622b87de38cfd546cbf2031"
 dependencies = [
  "deranged",
+ "libc",
  "num-conv",
+ "num_threads",
  "powerfmt",
  "serde",
  "time-core",

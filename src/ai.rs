@@ -1,22 +1,49 @@
 use crate::types::ChatMessage;
-use dioxus::prelude::*;
 use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    sync::{
-        Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    fmt,
+    sync::{Mutex, atomic::AtomicU64},
 };
+
+#[derive(Debug, Clone)]
+pub struct ChatError(String);
+
+impl ChatError {
+    fn new(msg: impl Into<String>) -> Self {
+        Self(msg.into())
+    }
+}
+
+impl fmt::Display for ChatError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ChatError {}
+
+impl From<reqwest::Error> for ChatError {
+    fn from(err: reqwest::Error) -> Self {
+        ChatError::new(err.to_string())
+    }
+}
+
+impl From<serde_json::Error> for ChatError {
+    fn from(err: serde_json::Error) -> Self {
+        ChatError::new(err.to_string())
+    }
+}
+
+type ChatResult<T> = Result<T, ChatError>;
 
 // ---------------
 // Non-streaming endpoint (custom URL, local Ollama, or Blackbird via env)
 // ---------------
 
-#[server(ChatReply)]
-pub async fn chat_reply(messages: Vec<ChatMessage>) -> Result<String, ServerFnError> {
+pub async fn chat_reply(messages: Vec<ChatMessage>) -> ChatResult<String> {
     use std::env;
 
     // Try runtime env var first; if not set, choose other backends
@@ -50,13 +77,10 @@ pub async fn chat_reply(messages: Vec<ChatMessage>) -> Result<String, ServerFnEr
             })
             .send()
             .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            .map_err(ChatError::from)?;
 
         let status = res.status();
-        let body_text = res
-            .text()
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let body_text = res.text().await.map_err(ChatError::from)?;
 
         if status.is_success() {
             match serde_json::from_str::<ChatResponse>(&body_text) {
@@ -64,7 +88,7 @@ pub async fn chat_reply(messages: Vec<ChatMessage>) -> Result<String, ServerFnEr
                 Err(_) => Ok(body_text),
             }
         } else {
-            Err(ServerFnError::new(format!(
+            Err(ChatError::new(format!(
                 "LLM endpoint error {status}: {body_text}"
             )))
         }
@@ -80,14 +104,12 @@ pub async fn chat_reply(messages: Vec<ChatMessage>) -> Result<String, ServerFnEr
 
         #[derive(Deserialize)]
         struct OllamaMessage {
-            role: String,
             content: String,
         }
 
         #[derive(Deserialize)]
         struct OllamaChatResponse {
             message: Option<OllamaMessage>,
-            done: Option<bool>,
         }
 
         let model = env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-oss:20b".to_string());
@@ -102,13 +124,10 @@ pub async fn chat_reply(messages: Vec<ChatMessage>) -> Result<String, ServerFnEr
             })
             .send()
             .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            .map_err(ChatError::from)?;
 
         let status = res.status();
-        let body_text = res
-            .text()
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let body_text = res.text().await.map_err(ChatError::from)?;
         if status.is_success() {
             match serde_json::from_str::<OllamaChatResponse>(&body_text) {
                 Ok(data) => {
@@ -121,7 +140,7 @@ pub async fn chat_reply(messages: Vec<ChatMessage>) -> Result<String, ServerFnEr
                 Err(_) => Ok(body_text),
             }
         } else {
-            Err(ServerFnError::new(format!(
+            Err(ChatError::new(format!(
                 "Ollama error {status}: {body_text}"
             )))
         }
@@ -164,34 +183,28 @@ pub async fn chat_reply(messages: Vec<ChatMessage>) -> Result<String, ServerFnEr
         if let Some(key) = api_key {
             req = req.bearer_auth(key);
         }
-        let res = req
-            .send()
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let res = req.send().await.map_err(ChatError::from)?;
 
         let status = res.status();
-        let body_text = res
-            .text()
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let body_text = res.text().await.map_err(ChatError::from)?;
         if status.is_success() {
             // Attempt several shapes
-            if let Ok(data) = serde_json::from_str::<BBResponseOpenAIShape>(&body_text) {
-                if let Some(first) = data.choices.into_iter().next() {
-                    return Ok(first.message.content);
-                }
+            if let Ok(data) = serde_json::from_str::<BBResponseOpenAIShape>(&body_text)
+                && let Some(first) = data.choices.into_iter().next()
+            {
+                return Ok(first.message.content);
             }
             if let Ok(data) = serde_json::from_str::<BBResponseContentOnly>(&body_text) {
                 return Ok(data.content);
             }
             Ok(body_text)
         } else {
-            Err(ServerFnError::new(format!(
+            Err(ChatError::new(format!(
                 "Blackbird error {status}: {body_text}"
             )))
         }
     } else {
-        Err(ServerFnError::new(
+        Err(ChatError::new(
             "No LLM configured. Set LLM_ENDPOINT for a custom backend, BLACKBIRD_ENDPOINT for Blackbird, or LLM_USE_OLLAMA=true for local Ollama.",
         ))
     }
@@ -207,10 +220,9 @@ static STREAMS: Lazy<Mutex<HashMap<u64, (String, bool)>>> =
 #[allow(dead_code)]
 static STREAM_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-#[server(ChatReplyStreamStart)]
-pub async fn chat_reply_stream_start(messages: Vec<ChatMessage>) -> Result<u64, ServerFnError> {
+pub async fn chat_reply_stream_start(messages: Vec<ChatMessage>) -> ChatResult<u64> {
     use std::env;
-    let id = STREAM_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let id = STREAM_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     {
         let mut map = STREAMS.lock().unwrap();
         map.insert(id, (String::new(), false));
@@ -274,18 +286,17 @@ pub async fn chat_reply_stream_start(messages: Vec<ChatMessage>) -> Result<u64, 
     Ok(id)
 }
 
-#[server(ChatReplyStreamPoll)]
-pub async fn chat_reply_stream_poll(id: u64) -> Result<(String, bool), ServerFnError> {
+pub async fn chat_reply_stream_poll(id: u64) -> ChatResult<(String, bool)> {
     let map = STREAMS.lock().unwrap();
     if let Some((content, done)) = map.get(&id) {
         Ok((content.clone(), *done))
     } else {
-        Err(ServerFnError::new("invalid stream id"))
+        Err(ChatError::new("invalid stream id"))
     }
 }
 
 #[allow(dead_code)]
-async fn stream_from_ollama(id: u64, messages: Vec<ChatMessage>) -> Result<(), ServerFnError> {
+async fn stream_from_ollama(id: u64, messages: Vec<ChatMessage>) -> ChatResult<()> {
     use std::env;
 
     #[derive(Serialize)]
@@ -306,12 +317,12 @@ async fn stream_from_ollama(id: u64, messages: Vec<ChatMessage>) -> Result<(), S
         })
         .send()
         .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+        .map_err(ChatError::from)?;
 
     let status = res.status();
     if !status.is_success() {
         let body_text = res.text().await.unwrap_or_default();
-        return Err(ServerFnError::new(format!(
+        return Err(ChatError::new(format!(
             "Ollama error {status}: {body_text}"
         )));
     }
@@ -337,7 +348,7 @@ async fn stream_from_ollama(id: u64, messages: Vec<ChatMessage>) -> Result<(), S
                     }
                 }
             }
-            Err(e) => return Err(ServerFnError::new(e.to_string())),
+            Err(e) => return Err(ChatError::from(e)),
         }
     }
 
@@ -390,7 +401,7 @@ fn mark_stream_done(id: u64) {
 }
 
 #[allow(dead_code)]
-async fn stream_from_blackbird(id: u64, messages: Vec<ChatMessage>) -> Result<(), ServerFnError> {
+async fn stream_from_blackbird(id: u64, messages: Vec<ChatMessage>) -> ChatResult<()> {
     use std::env;
 
     #[derive(Serialize)]
@@ -408,8 +419,8 @@ async fn stream_from_blackbird(id: u64, messages: Vec<ChatMessage>) -> Result<()
     let model_val = env::var("BLACKBIRD_MODEL").unwrap_or_else(|_| "gpt-oss-120b".to_string());
     let api_key = env::var("BLACKBIRD_API_KEY").ok();
 
-    let endpoint = env::var("BLACKBIRD_ENDPOINT")
-        .map_err(|_| ServerFnError::new("BLACKBIRD_ENDPOINT not set"))?;
+    let endpoint =
+        env::var("BLACKBIRD_ENDPOINT").map_err(|_| ChatError::new("BLACKBIRD_ENDPOINT not set"))?;
     let client = reqwest::Client::new();
     let mut req = client
         .post(endpoint)
@@ -423,15 +434,12 @@ async fn stream_from_blackbird(id: u64, messages: Vec<ChatMessage>) -> Result<()
     if let Some(key) = api_key {
         req = req.bearer_auth(key);
     }
-    let res = req
-        .send()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let res = req.send().await.map_err(ChatError::from)?;
 
     let status = res.status();
     if !status.is_success() {
         let body_text = res.text().await.unwrap_or_default();
-        return Err(ServerFnError::new(format!(
+        return Err(ChatError::new(format!(
             "Blackbird error {status}: {body_text}"
         )));
     }
@@ -454,15 +462,15 @@ async fn stream_from_blackbird(id: u64, messages: Vec<ChatMessage>) -> Result<()
 
                     if line.is_empty() {
                         // End of event
-                        if let Some(data) = data_acc.take() {
-                            if let Some((piece, done)) = parse_blackbird_sse_data(&data) {
-                                if !piece.is_empty() {
-                                    append_stream(id, &piece);
-                                }
-                                if done {
-                                    mark_stream_done(id);
-                                    return Ok(());
-                                }
+                        if let Some(data) = data_acc.take()
+                            && let Some((piece, done)) = parse_blackbird_sse_data(&data)
+                        {
+                            if !piece.is_empty() {
+                                append_stream(id, &piece);
+                            }
+                            if done {
+                                mark_stream_done(id);
+                                return Ok(());
                             }
                         }
                         continue;
@@ -481,7 +489,7 @@ async fn stream_from_blackbird(id: u64, messages: Vec<ChatMessage>) -> Result<()
                     }
                 }
             }
-            Err(e) => return Err(ServerFnError::new(e.to_string())),
+            Err(e) => return Err(ChatError::from(e)),
         }
     }
 
@@ -528,10 +536,10 @@ pub fn parse_blackbird_sse_data(data: &str) -> Option<(String, bool)> {
 
     if let Ok(parsed) = serde_json::from_str::<BBResponseOpenAIShape>(trimmed) {
         if let Some(first) = parsed.choices.into_iter().next() {
-            if let Some(delta) = first.delta {
-                if let Some(piece) = delta.content {
-                    return Some((piece, false));
-                }
+            if let Some(delta) = first.delta
+                && let Some(piece) = delta.content
+            {
+                return Some((piece, false));
             }
             if let Some(msg) = first.message {
                 return Some((msg.content, false));

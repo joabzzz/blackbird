@@ -8,3 +8,6 @@
 .env
 .env
 .env.local
+cache/
+
+TODO.md

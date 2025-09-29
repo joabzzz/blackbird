@@ -1,189 +1,84 @@
-# Blackbird — Rust + Dioxus AI App Template
+![Blackbird](assets/blackbird-title.png)
 
-Build cross‑platform AI apps with one Rust codebase. This template uses Dioxus 0.6 (fullstack) to target desktop and web (mobile feature flags are wired in and ready to extend).
+A multi-platform application for writing, organizing, and analyzing docs and data.
 
-It includes a chat UI with streaming responses, Markdown rendering with syntax highlighting, and pluggable LLM backends configured via environment variables.
+![Demo](docs/blackbird-demo.gif)
 
-## Highlights
+## About
 
-- Cross‑platform targets: desktop and web, with mobile ready via features
-- Streaming support: Server‑Sent Events (SSE) and JSONL styles
-- Pluggable LLMs: custom HTTP endpoint, local Ollama, or hosted Blackbird
-- Safe secrets: `.env` is loaded only on the server/desktop side
-- Clean UI: Markdown + code highlighting, copy/save actions, performance timing
+Blackbird is a simple and elegant AI chat application that runs on desktop, web, and mobile. It provides a clean interface for interacting with local and remote AI models and managing your conversations.
 
-### Desktop & iOS
+## Features
 
-<table>
-  <tr>
-    <td><img src="docs/desktop.png" alt="Desktop preview" width="360" /></td>
-    <td><img src="docs/ios.png" alt="iOS preview" width="240" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Desktop</sub></td>
-    <td align="center"><sub>iOS</sub></td>
-  </tr>
-</table>
+*   **AI Chat:** A beautiful and intuitive chat interface for interacting with AI models.
+*   **Saved Documents:** Save and manage your conversations and other documents.
+*   **Theming:** Customize the look and feel of the application with light, dark, and octane themes.
+*   **Multi-platform:** Runs on Windows, macOS, Linux, iOS, Android, and the web.
 
+## Getting Started
 
+To get started with Blackbird, you'll need to have Rust and the appropriate build tools for your target platform installed.
 
----
+### Prerequisites
 
-## Quickstart
+*   [Rust](https://www.rust-lang.org/tools/install)
 
-1) Prerequisites
+### Building and Running
 
-- Rust toolchain: https://rustup.rs
-- Dioxus CLI: `cargo install dioxus-cli` (binary name: `dx`)
-- For web builds: `rustup target add wasm32-unknown-unknown`
-- Optional: Ollama running locally (if you want local LLMs)
+1.  **Clone the repository:**
 
-2) Configure an LLM backend
+    ```bash
+    git clone https://github.com/joabar/blackbird.git
+    cd blackbird
+    ```
 
-- Copy `.env.example` to `.env` and set one of the options below.
-- Only one is needed; the app chooses in this order: `LLM_ENDPOINT` → `LLM_USE_OLLAMA` → `BLACKBIRD_ENDPOINT`.
+2.  **Create a `.env` file:**
 
-Options in `.env`:
+    Copy the `.env.example` file to `.env` and add your AI provider's API key.
 
-```bash
-# Option 1: Custom non‑streaming endpoint
-# Expects:  { messages: [{role, content}, ...] }
-# Returns:  either { content } JSON or plain text
-LLM_ENDPOINT="https://your.internal.endpoint/chat"
+    ```bash
+    cp .env.example .env
+    ```
 
-# Option 2: Local Ollama (non/streaming)
-LLM_USE_OLLAMA=true
-LLM_MODEL="gpt-oss:20b"   # optional
-```
+3.  **Build and run for your target platform:**
 
-3) Run in development
+    *   **Desktop:**
 
-- Desktop (recommended for local dev):
+        ```bash
+        # Install the Dioxus CLI
+        cargo install dioxus-cli
 
-```
-dx serve --platform desktop
-```
+        # Run the desktop app
+        dioxus serve --platform desktop
+        ```
 
-- Web (runs a dev server and browser preview):
+    *   **Web:**
 
-```
-dx serve --platform web
-```
+        ```bash
+        # Install the Dioxus CLI
+        cargo install dioxus-cli
 
-Note: In web mode, Dioxus server functions run on the dev server, so `.env` variables remain server‑side.
+        # Run the web app
+        dioxus serve --platform web
+        ```
 
-4) Build for release
+    *   **Mobile:**
 
-- Desktop binary:
+        Follow the Dioxus documentation for setting up your mobile development environment: [Dioxus Mobile Docs](https://dioxuslabs.com/docs/0.5/guide/en/getting_started/mobile)
 
-```
-dx build --release --platform desktop
-```
+## Built With
 
-- Web assets (static site in `dist/`):
+*   [Rust](https://www.rust-lang.org/) - Join the [Community](https://www.rust-lang.org/community)
+*   [Dioxus](https://dioxuslabs.com/) - Join the [Discord](https://discord.gg/XgGxMSkv3M) and check out [Awesome Dioxus](https://github.com/DioxusLabs/awesome-dioxus)
+*   [Tokio](https://tokio.rs/) - Join the [Discord](https://discord.gg/tokio)
+*   [Serde](https://serde.rs/) - Join the [Discord](https://discord.gg/serde)
+*   [Reqwest](https://docs.rs/reqwest/latest/reqwest/) - Join the [Discord](https://discord.gg/rust-lang-community)
+*   [Ollama](https://ollama.ai/) - Join the [Discord](https://discord.gg/ollama)
 
-```
-dx build --release --platform web
-```
+## Author
 
-If you prefer Cargo directly for desktop, disable the default features and enable `desktop`:
-
-```
-cargo run --no-default-features --features desktop
-```
-
----
-
-## LLM Backends
-
-This template supports three backend modes selected by env vars, in priority order:
-
-1) Custom HTTP endpoint (`LLM_ENDPOINT`)
-
-- Request body:
-
-```json
-{ "messages": [{ "role": "user" | "assistant", "content": "..." }] }
-```
-
-- Response: ideally `{ "content": "..." }` JSON. If the response is plain text, it will be displayed as‑is.
-- Streaming: not required — the app will poll once and render the full reply.
-
-2) Local Ollama (`LLM_USE_OLLAMA=true`)
-
-- Endpoint: `http://127.0.0.1:11434/api/chat`
-- Non‑streaming and streaming are supported. Set `LLM_MODEL` to select a model.
-
-3) Blackbird (`BLACKBIRD_ENDPOINT` + optional `BLACKBIRD_*`)
-
-- Non‑streaming and streaming via SSE are supported.
-- Accepts OpenAI‑like response shapes (choices[].delta/content) or `{ content }`.
-- Uses `Authorization: Bearer <BLACKBIRD_API_KEY>` if provided.
-
-Security note: never commit real keys. Use `.env` locally and your platform’s secret manager for production.
-
----
-
-## Project Structure
-
-- `src/ui.rs` — Dioxus components and chat UI (Markdown, syntax highlight, copy/save, streaming)
-- `src/ai.rs` — Server functions and backend integrations (custom, Ollama, Blackbird; SSE/JSONL parsing)
-- `src/types.rs` — Shared types (`Role`, `ChatMessage`)
-- `src/main.rs` — Entry point; loads `.env` on non‑WASM targets and launches the app
-- `assets/mostra.css` — Minimal design tokens and components
-- `Dioxus.toml` — Platform configuration for the `dx` CLI
-- `.env.example` — Example runtime configuration for LLM backends
-
-Features in `Cargo.toml`:
-
-- `web` → `dioxus/web`
-- `desktop` → `dioxus/desktop`
-- `mobile` → `dioxus/mobile` (enabled by default; use the `dx` CLI or set features explicitly when using Cargo)
-
----
-
-## UI Details
-
-- Markdown rendering with code blocks, tables, lists, strikethrough, and task lists
-- Syntax highlighting via `syntect`
-- Streaming indicator with a shimmer effect while waiting
-- Copy to clipboard on assistant messages (desktop/mobile)
-- Inline processing time display: “Processed in X.Ys”
-
----
-
-## Customizing
-
-- Styling: edit `assets/mostra.css` for colors, spacing, and components.
-- Chat behavior: tweak `src/ui.rs` to adjust message rendering, input behavior, and controls.
-- Providers: extend `src/ai.rs` to add new LLMs or change routing/shape handling.
-
----
-
-## Testing & Troubleshooting
-
-- Run tests:
-
-```
-cargo test
-```
-
-- Common issues:
-
-- “No LLM configured”: ensure `.env` sets one of `LLM_ENDPOINT`, `LLM_USE_OLLAMA=true`, or `BLACKBIRD_ENDPOINT`.
-- CORS in web mode: when pointing at remote APIs, prefer using the bundled server function as a proxy so secrets stay server‑side.
-- Feature flags: if using `cargo run`, pass `--no-default-features --features desktop` for desktop.
-
----
-
-## Production Notes
-
-- Keep API keys server‑side. In desktop builds, keys live in the local process. In web builds, use a backend proxy for API calls — don’t expose keys to the browser.
-- Consider rate‑limit, retries, and content filtering for user‑facing releases.
-- Bundle and sign platform binaries per your distribution needs.
-
----
+*   **Alessandro Joabar** - [@joabzzz](https://github.com/joabzzz)
 
 ## License
 
-This template is provided as‑is for you to adapt.
+This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.

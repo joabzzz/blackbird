@@ -1,7 +1,8 @@
-# ![Blackbird](assets/blackbird-title.png)
+![Blackbird](assets/blackbird-title.png)
 
 A multi-platform application for writing, organizing, and analyzing docs and data.
 
+![Demo](docs/blackbird-demo.gif)
 
 ## About
 

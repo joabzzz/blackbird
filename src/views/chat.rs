@@ -536,16 +536,16 @@ mod metrics {
     }
 
     fn extract_doc_tags(content: &str) -> (String, Vec<String>) {
-        if let Some(start) = content.rfind("[[doc_tags:")
-            && let Some(end) = content[start..].find("]]")
-        {
-            let raw_tags = &content[start + "[[doc_tags:".len()..start + end];
-            let cleaned_content = content[..start].trim_end().to_string();
-            let tags = raw_tags
-                .split(',')
-                .filter_map(normalize_tag)
-                .collect::<Vec<_>>();
-            return (cleaned_content, tags);
+        if let Some(start) = content.rfind("[[doc_tags:") {
+            if let Some(end) = content[start..].find("]]") {
+                let raw_tags = &content[start + "[[doc_tags:".len()..start + end];
+                let cleaned_content = content[..start].trim_end().to_string();
+                let tags = raw_tags
+                    .split(',')
+                    .filter_map(normalize_tag)
+                    .collect::<Vec<_>>();
+                return (cleaned_content, tags);
+            }
         }
 
         (content.to_string(), Vec::new())

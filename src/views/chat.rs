@@ -407,22 +407,22 @@ impl ChatState {
             .messages
             .with(|msgs| msgs.get(index).map(|msg| msg.content.clone()));
 
-        if let (Some(start), Some(content)) = (started_at, content) {
-            if let Some(enrichment) = metrics::enrich_response(Some(start), &content) {
-                let mut performances = self.performances;
-                performances.with_mut(|slots| {
-                    if let Some(slot) = slots.get_mut(index) {
-                        *slot = Some(enrichment.performance);
-                    }
-                });
-                let mut messages = self.messages;
-                messages.with_mut(|msgs| {
-                    if let Some(msg) = msgs.get_mut(index) {
-                        msg.content = enrichment.content;
-                        msg.tags = enrichment.tags;
-                    }
-                });
-            }
+        if let (Some(start), Some(content)) = (started_at, content)
+            && let Some(enrichment) = metrics::enrich_response(Some(start), &content)
+        {
+            let mut performances = self.performances;
+            performances.with_mut(|slots| {
+                if let Some(slot) = slots.get_mut(index) {
+                    *slot = Some(enrichment.performance);
+                }
+            });
+            let mut messages = self.messages;
+            messages.with_mut(|msgs| {
+                if let Some(msg) = msgs.get_mut(index) {
+                    msg.content = enrichment.content;
+                    msg.tags = enrichment.tags;
+                }
+            });
         }
 
         let mut started_at_signal = self.processing_started_at;
@@ -536,16 +536,16 @@ mod metrics {
     }
 
     fn extract_doc_tags(content: &str) -> (String, Vec<String>) {
-        if let Some(start) = content.rfind("[[doc_tags:") {
-            if let Some(end) = content[start..].find("]]") {
-                let raw_tags = &content[start + "[[doc_tags:".len()..start + end];
-                let cleaned_content = content[..start].trim_end().to_string();
-                let tags = raw_tags
-                    .split(',')
-                    .filter_map(normalize_tag)
-                    .collect::<Vec<_>>();
-                return (cleaned_content, tags);
-            }
+        if let Some(start) = content.rfind("[[doc_tags:")
+            && let Some(end) = content[start..].find("]]")
+        {
+            let raw_tags = &content[start + "[[doc_tags:".len()..start + end];
+            let cleaned_content = content[..start].trim_end().to_string();
+            let tags = raw_tags
+                .split(',')
+                .filter_map(normalize_tag)
+                .collect::<Vec<_>>();
+            return (cleaned_content, tags);
         }
 
         (content.to_string(), Vec::new())

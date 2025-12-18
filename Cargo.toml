@@ -31,6 +31,9 @@ fasteval = "0.2"
 # Async utilities
 futures = "0.3"
 
+# Cross-platform directories
+dirs = "5"
+
 # HTTP client for Blackbird endpoint
 reqwest = { version = "0.12", features = ["json", "stream"] }
 

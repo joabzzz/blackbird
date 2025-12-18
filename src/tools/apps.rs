@@ -1,5 +1,5 @@
 use super::ToolError;
-use crate::views::shared::SavedDoc;
+use crate::views::shared::SavedApp;
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
@@ -7,12 +7,12 @@ use serde_json::json;
 use std::sync::{Arc, RwLock};
 
 // ============================================
-// SEARCH DOCS TOOL
+// SEARCH APPS TOOL
 // ============================================
 
-/// Arguments for searching documents
+/// Arguments for searching apps
 #[derive(Deserialize)]
-pub struct SearchDocsArgs {
+pub struct SearchAppsArgs {
     query: String,
     #[serde(default = "default_limit")]
     limit: usize,
@@ -22,19 +22,19 @@ fn default_limit() -> usize {
     5
 }
 
-/// Tool for searching through saved documents
+/// Tool for searching through saved apps
 #[derive(Clone)]
-pub struct SearchDocsTool {
-    pub docs: Arc<RwLock<Vec<SavedDoc>>>,
+pub struct SearchAppsTool {
+    pub apps: Arc<RwLock<Vec<SavedApp>>>,
 }
 
-impl SearchDocsTool {
-    pub fn new(docs: Arc<RwLock<Vec<SavedDoc>>>) -> Self {
-        Self { docs }
+impl SearchAppsTool {
+    pub fn new(apps: Arc<RwLock<Vec<SavedApp>>>) -> Self {
+        Self { apps }
     }
 }
 
-impl Serialize for SearchDocsTool {
+impl Serialize for SearchAppsTool {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -43,34 +43,34 @@ impl Serialize for SearchDocsTool {
     }
 }
 
-impl<'de> Deserialize<'de> for SearchDocsTool {
+impl<'de> Deserialize<'de> for SearchAppsTool {
     fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         Err(serde::de::Error::custom(
-            "SearchDocsTool cannot be deserialized",
+            "SearchAppsTool cannot be deserialized",
         ))
     }
 }
 
-impl Tool for SearchDocsTool {
-    const NAME: &'static str = "search_docs";
+impl Tool for SearchAppsTool {
+    const NAME: &'static str = "search_apps";
 
     type Error = ToolError;
-    type Args = SearchDocsArgs;
+    type Args = SearchAppsArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
-            name: "search_docs".to_string(),
-            description: "Search through saved documents for keywords or phrases. Returns matching documents with relevant snippets showing where the query appears.".to_string(),
+            name: "search_apps".to_string(),
+            description: "Search through saved apps for keywords or phrases. Returns matching apps with relevant snippets.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Search query to find in document titles and content"
+                        "description": "Search query to find in app titles and content"
                     },
                     "limit": {
                         "type": "number",
@@ -86,35 +86,35 @@ impl Tool for SearchDocsTool {
         &self,
         args: Self::Args,
     ) -> impl std::future::Future<Output = Result<Self::Output, Self::Error>> + Send {
-        let docs = self.docs.clone();
+        let apps = self.apps.clone();
 
         async move {
-            let docs = docs
+            let apps = apps
                 .read()
-                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read docs: {}", e)))?;
+                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read apps: {}", e)))?;
 
             let query_lower = args.query.to_lowercase();
             let limit = args.limit.min(20);
 
             let mut results = Vec::new();
 
-            for doc in docs.iter() {
-                let title_match = doc.title.to_lowercase().contains(&query_lower);
-                let content_match = doc.content.to_lowercase().contains(&query_lower);
+            for app in apps.iter() {
+                let title_match = app.title.to_lowercase().contains(&query_lower);
+                let content_match = app.content.to_lowercase().contains(&query_lower);
 
                 if title_match || content_match {
                     let snippet = if content_match {
-                        extract_snippet(&doc.content, &args.query, 100)
+                        extract_snippet(&app.content, &args.query, 100)
                     } else {
-                        doc.content.chars().take(100).collect::<String>()
+                        app.content.chars().take(100).collect::<String>()
                     };
 
                     results.push(json!({
-                        "id": doc.id,
-                        "title": doc.title,
-                        "tags": doc.tags,
+                        "id": app.id,
+                        "title": app.title,
+                        "tags": app.tags,
                         "snippet": snippet,
-                        "created_at": doc.created_at,
+                        "created_at": app.created_at,
                     }));
 
                     if results.len() >= limit {
@@ -124,7 +124,7 @@ impl Tool for SearchDocsTool {
             }
 
             if results.is_empty() {
-                Ok(format!("No documents found matching '{}'", args.query))
+                Ok(format!("No apps found matching '{}'", args.query))
             } else {
                 Ok(serde_json::to_string_pretty(&json!({
                     "query": args.query,
@@ -161,11 +161,11 @@ fn extract_snippet(content: &str, query: &str, context_chars: usize) -> String {
 }
 
 // ============================================
-// GET DOCS LIST TOOL
+// GET APPS LIST TOOL
 // ============================================
 
 #[derive(Deserialize)]
-pub struct GetDocsListArgs {
+pub struct GetAppsListArgs {
     #[serde(default)]
     tag_filter: Option<String>,
     #[serde(default = "default_list_limit")]
@@ -177,17 +177,17 @@ fn default_list_limit() -> usize {
 }
 
 #[derive(Clone)]
-pub struct GetDocsListTool {
-    pub docs: Arc<RwLock<Vec<SavedDoc>>>,
+pub struct GetAppsListTool {
+    pub apps: Arc<RwLock<Vec<SavedApp>>>,
 }
 
-impl GetDocsListTool {
-    pub fn new(docs: Arc<RwLock<Vec<SavedDoc>>>) -> Self {
-        Self { docs }
+impl GetAppsListTool {
+    pub fn new(apps: Arc<RwLock<Vec<SavedApp>>>) -> Self {
+        Self { apps }
     }
 }
 
-impl Serialize for GetDocsListTool {
+impl Serialize for GetAppsListTool {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -196,38 +196,38 @@ impl Serialize for GetDocsListTool {
     }
 }
 
-impl<'de> Deserialize<'de> for GetDocsListTool {
+impl<'de> Deserialize<'de> for GetAppsListTool {
     fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         Err(serde::de::Error::custom(
-            "GetDocsListTool cannot be deserialized",
+            "GetAppsListTool cannot be deserialized",
         ))
     }
 }
 
-impl Tool for GetDocsListTool {
-    const NAME: &'static str = "get_docs_list";
+impl Tool for GetAppsListTool {
+    const NAME: &'static str = "get_apps_list";
 
     type Error = ToolError;
-    type Args = GetDocsListArgs;
+    type Args = GetAppsListArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
-            name: "get_docs_list".to_string(),
-            description: "Get a list of saved documents with optional tag filtering. Returns document metadata including titles, tags, and creation dates.".to_string(),
+            name: "get_apps_list".to_string(),
+            description: "Get a list of saved apps with optional tag filtering. Returns app metadata including titles, tags, and creation dates.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "tag_filter": {
                         "type": "string",
-                        "description": "Optional tag to filter documents by (case-insensitive)"
+                        "description": "Optional tag to filter apps by (case-insensitive)"
                     },
                     "limit": {
                         "type": "number",
-                        "description": "Maximum number of documents to return (default: 10, max: 50)"
+                        "description": "Maximum number of apps to return (default: 10, max: 50)"
                     }
                 }
             }),
@@ -238,47 +238,47 @@ impl Tool for GetDocsListTool {
         &self,
         args: Self::Args,
     ) -> impl std::future::Future<Output = Result<Self::Output, Self::Error>> + Send {
-        let docs = self.docs.clone();
+        let apps = self.apps.clone();
 
         async move {
-            let docs = docs
+            let apps = apps
                 .read()
-                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read docs: {}", e)))?;
+                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read apps: {}", e)))?;
 
             let limit = args.limit.min(50);
 
-            let filtered: Vec<_> = docs
+            let filtered: Vec<_> = apps
                 .iter()
-                .filter(|doc| {
+                .filter(|app| {
                     if let Some(ref tag) = args.tag_filter {
-                        doc.tags.iter().any(|t| t.eq_ignore_ascii_case(tag))
+                        app.tags.iter().any(|t| t.eq_ignore_ascii_case(tag))
                     } else {
                         true
                     }
                 })
                 .take(limit)
-                .map(|doc| {
+                .map(|app| {
                     json!({
-                        "id": doc.id,
-                        "title": doc.title,
-                        "tags": doc.tags,
-                        "created_at": doc.created_at,
-                        "preview": doc.content.chars().take(100).collect::<String>(),
+                        "id": app.id,
+                        "title": app.title,
+                        "tags": app.tags,
+                        "created_at": app.created_at,
+                        "preview": app.content.chars().take(100).collect::<String>(),
                     })
                 })
                 .collect();
 
             if filtered.is_empty() {
                 if let Some(tag) = args.tag_filter {
-                    Ok(format!("No documents found with tag '{}'", tag))
+                    Ok(format!("No apps found with tag '{}'", tag))
                 } else {
-                    Ok("No documents found".to_string())
+                    Ok("No apps found".to_string())
                 }
             } else {
                 Ok(serde_json::to_string_pretty(&json!({
                     "count": filtered.len(),
                     "filter": args.tag_filter,
-                    "documents": filtered,
+                    "apps": filtered,
                 }))
                 .unwrap())
             }

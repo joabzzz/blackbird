@@ -1,7 +1,7 @@
 use crate::theme::theme_definition;
 use crate::types::ThemeMode;
-use crate::views::shared::{SavedDoc, initial_saved_docs};
-use crate::views::{ChatView, DocsView, SettingsView};
+use crate::views::shared::{SavedApp, initial_saved_apps};
+use crate::views::{AppsView, SettingsView, WorkbenchView};
 use dioxus::prelude::*;
 use std::time::Duration;
 
@@ -12,15 +12,15 @@ const SPLASH_HIDE_DELAY: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AppTab {
-    Chat,
-    Docs,
+    Workbench,
+    Apps,
     Settings,
 }
 
 #[component]
 pub fn App() -> Element {
-    let saved_docs = use_signal(initial_saved_docs);
-    let active_tab = use_signal(|| AppTab::Chat);
+    let saved_apps = use_signal(initial_saved_apps);
+    let active_tab = use_signal(|| AppTab::Workbench);
     let base_font_px = use_signal(|| 14i32);
     let theme = use_signal(|| ThemeMode::Dark);
     let show_splash = use_signal(|| true);
@@ -35,7 +35,7 @@ pub fn App() -> Element {
         AppHeader { active_tab, theme: theme() }
         TabPanels {
             active_tab,
-            saved_docs,
+            saved_apps,
             base_font_px,
             theme,
         }
@@ -81,7 +81,7 @@ fn AppHeader(active_tab: Signal<AppTab>, theme: ThemeMode) -> Element {
 #[component]
 fn TabPanels(
     active_tab: Signal<AppTab>,
-    saved_docs: Signal<Vec<SavedDoc>>,
+    saved_apps: Signal<Vec<SavedApp>>,
     base_font_px: Signal<i32>,
     theme: Signal<ThemeMode>,
 ) -> Element {
@@ -89,13 +89,13 @@ fn TabPanels(
         div { class: "tab-panels",
             TabPanel {
                 active_tab,
-                tab: AppTab::Chat,
-                children: rsx!( ChatView { saved_docs, base_font_px } ),
+                tab: AppTab::Workbench,
+                children: rsx!( WorkbenchView { saved_apps, base_font_px, theme } ),
             }
             TabPanel {
                 active_tab,
-                tab: AppTab::Docs,
-                children: rsx!( DocsView { saved_docs } ),
+                tab: AppTab::Apps,
+                children: rsx!( AppsView { saved_apps, theme } ),
             }
             TabPanel {
                 active_tab,
@@ -123,8 +123,8 @@ fn TabPanel(active_tab: Signal<AppTab>, tab: AppTab, children: Element) -> Eleme
 fn TabNavigation(active_tab: Signal<AppTab>) -> Element {
     rsx! {
         div { class: "tabs",
-            TabButton { active_tab, tab: AppTab::Chat, label: "Chat" }
-            TabButton { active_tab, tab: AppTab::Docs, label: "Docs" }
+            TabButton { active_tab, tab: AppTab::Workbench, label: "Workbench" }
+            TabButton { active_tab, tab: AppTab::Apps, label: "Apps" }
             TabButton { active_tab, tab: AppTab::Settings, label: "Settings" }
         }
     }

@@ -8,7 +8,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(not(target_arch = "wasm32"))]
 use std::{fs, path::PathBuf};
 
-pub const SAVED_DOCS_DIR: &str = "cache/docs";
+/// Get the apps directory path - uses platform-appropriate location
+#[cfg(not(target_arch = "wasm32"))]
+fn get_apps_dir() -> PathBuf {
+    // Try to get a proper app data directory
+    if let Some(data_dir) = dirs::data_local_dir() {
+        // On iOS/macOS this will be ~/Library/Application Support
+        // On Linux: ~/.local/share
+        // On Windows: C:\Users\<User>\AppData\Local
+        return data_dir.join("blackbird").join("apps");
+    }
+
+    // Fallback for desktop development
+    PathBuf::from("cache/apps")
+}
 
 static MARKDOWN_OPTIONS: Lazy<ComrakOptions> = Lazy::new(|| {
     let mut options = ComrakOptions::default();
@@ -20,15 +33,20 @@ static MARKDOWN_OPTIONS: Lazy<ComrakOptions> = Lazy::new(|| {
     options
 });
 
+/// A saved app that can be rendered in the workbench
 #[derive(Clone, PartialEq)]
-pub struct SavedDoc {
+pub struct SavedApp {
     pub id: String,
     pub title: String,
+    /// The raw HTML/JS/CSS content of the app
     pub content: String,
     pub file_path: Option<String>,
     pub created_at: u64,
     pub tags: Vec<String>,
 }
+
+// Backwards compatibility alias
+pub type SavedDoc = SavedApp;
 
 const STOPWORDS: &[&str] = &[
     "the", "and", "that", "with", "have", "this", "from", "there", "would", "could", "should",
@@ -74,10 +92,10 @@ pub fn markdown_to_html(md: &str) -> String {
     markdown_to_html_with_plugins(md, &MARKDOWN_OPTIONS, &plugins)
 }
 
-pub fn initial_saved_docs() -> Vec<SavedDoc> {
+pub fn initial_saved_apps() -> Vec<SavedApp> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        load_docs_from_disk()
+        load_apps_from_disk()
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -85,38 +103,48 @@ pub fn initial_saved_docs() -> Vec<SavedDoc> {
     }
 }
 
+// Backwards compatibility alias
+pub fn initial_saved_docs() -> Vec<SavedDoc> {
+    initial_saved_apps()
+}
+
+/// Persist an app (HTML/JS/CSS) to disk
 #[cfg(not(target_arch = "wasm32"))]
-pub fn persist_markdown_doc(content: &str, tags_override: Option<&[String]>) -> Option<SavedDoc> {
+pub fn persist_app(
+    content: &str,
+    title: &str,
+    tags_override: Option<&[String]>,
+) -> Option<SavedApp> {
     if content.trim().is_empty() {
         return None;
     }
 
-    if let Err(err) = fs::create_dir_all(SAVED_DOCS_DIR) {
-        eprintln!("failed to create docs directory: {}", err);
+    let apps_dir = get_apps_dir();
+    if let Err(err) = fs::create_dir_all(&apps_dir) {
+        eprintln!("failed to create apps directory at {:?}: {}", apps_dir, err);
         return None;
     }
 
     let timestamp = current_timestamp();
-    let title = extract_title(content, "Untitled");
-    let slug = slugify_for_filename(&title);
+    let slug = slugify_for_filename(title);
     let filename = if slug.is_empty() {
-        format!("note-{}.md", timestamp)
+        format!("app-{}.html", timestamp)
     } else {
-        format!("{}-{}.md", slug, timestamp)
+        format!("{}-{}.html", slug, timestamp)
     };
-    let path = PathBuf::from(SAVED_DOCS_DIR).join(filename);
+    let path = apps_dir.join(filename);
     if let Err(err) = fs::write(&path, content) {
-        eprintln!("failed to write saved doc: {}", err);
+        eprintln!("failed to write saved app to {:?}: {}", path, err);
         return None;
     }
     let path_str = path.to_string_lossy().into_owned();
     let tags = match tags_override {
         Some(tags) if !tags.is_empty() => tags.to_vec(),
-        _ => generate_tags(content),
+        _ => vec!["App".to_string()],
     };
-    Some(SavedDoc {
+    Some(SavedApp {
         id: path_str.clone(),
-        title,
+        title: title.to_string(),
         content: content.to_string(),
         file_path: Some(path_str),
         created_at: timestamp,
@@ -125,25 +153,41 @@ pub fn persist_markdown_doc(content: &str, tags_override: Option<&[String]>) -> 
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn persist_markdown_doc(content: &str, tags_override: Option<&[String]>) -> Option<SavedDoc> {
+pub fn persist_app(
+    content: &str,
+    title: &str,
+    tags_override: Option<&[String]>,
+) -> Option<SavedApp> {
     if content.trim().is_empty() {
         return None;
     }
 
     let timestamp = current_timestamp();
-    let title = extract_title(content, "Untitled");
     let tags = match tags_override {
         Some(tags) if !tags.is_empty() => tags.to_vec(),
-        _ => generate_tags(content),
+        _ => vec!["App".to_string()],
     };
-    Some(SavedDoc {
+    Some(SavedApp {
         id: format!("mem-{}", timestamp),
-        title,
+        title: title.to_string(),
         content: content.to_string(),
         file_path: None,
         created_at: timestamp,
         tags,
     })
+}
+
+// Backwards compatibility - keep for now
+#[cfg(not(target_arch = "wasm32"))]
+pub fn persist_markdown_doc(content: &str, tags_override: Option<&[String]>) -> Option<SavedDoc> {
+    let title = extract_title(content, "Untitled");
+    persist_app(content, &title, tags_override)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn persist_markdown_doc(content: &str, tags_override: Option<&[String]>) -> Option<SavedDoc> {
+    let title = extract_title(content, "Untitled");
+    persist_app(content, &title, tags_override)
 }
 
 pub fn display_file_name(path: &str) -> String {
@@ -155,17 +199,19 @@ pub fn display_file_name(path: &str) -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn load_docs_from_disk() -> Vec<SavedDoc> {
-    let dir = PathBuf::from(SAVED_DOCS_DIR);
+fn load_apps_from_disk() -> Vec<SavedApp> {
+    let dir = get_apps_dir();
     if !dir.exists() {
         return Vec::new();
     }
 
-    let mut docs_with_time: Vec<(u64, SavedDoc)> = Vec::new();
+    let mut apps_with_time: Vec<(u64, SavedApp)> = Vec::new();
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            // Accept .html files for apps
+            let ext = path.extension().and_then(|ext| ext.to_str());
+            if ext != Some("html") && ext != Some("md") {
                 continue;
             }
             if let Ok(content) = fs::read_to_string(&path) {
@@ -173,8 +219,17 @@ fn load_docs_from_disk() -> Vec<SavedDoc> {
                     .file_stem()
                     .and_then(|stem| stem.to_str())
                     .unwrap_or("Untitled");
-                let title = extract_title(&content, fallback);
-                let tags = generate_tags(&content);
+                // For HTML files, use the filename as title; for md, extract from content
+                let title = if ext == Some("html") {
+                    extract_html_title(&content).unwrap_or_else(|| fallback.to_string())
+                } else {
+                    extract_title(&content, fallback)
+                };
+                let tags = if ext == Some("html") {
+                    vec!["App".to_string()]
+                } else {
+                    generate_tags(&content)
+                };
                 let timestamp = entry
                     .metadata()
                     .ok()
@@ -183,7 +238,7 @@ fn load_docs_from_disk() -> Vec<SavedDoc> {
                     .map(|dur| dur.as_secs())
                     .unwrap_or(0);
                 let path_str = path.to_string_lossy().into_owned();
-                let doc = SavedDoc {
+                let app = SavedApp {
                     id: path_str.clone(),
                     title,
                     content,
@@ -191,13 +246,28 @@ fn load_docs_from_disk() -> Vec<SavedDoc> {
                     created_at: timestamp,
                     tags,
                 };
-                docs_with_time.push((doc.created_at, doc));
+                apps_with_time.push((app.created_at, app));
             }
         }
     }
 
-    docs_with_time.sort_by(|a, b| b.0.cmp(&a.0));
-    docs_with_time.into_iter().map(|(_, doc)| doc).collect()
+    apps_with_time.sort_by(|a, b| b.0.cmp(&a.0));
+    apps_with_time.into_iter().map(|(_, app)| app).collect()
+}
+
+/// Extract title from HTML <title> tag
+fn extract_html_title(content: &str) -> Option<String> {
+    let lower = content.to_lowercase();
+    if let Some(start) = lower.find("<title>") {
+        let after_tag = start + 7;
+        if let Some(end) = lower[after_tag..].find("</title>") {
+            let title = content[after_tag..after_tag + end].trim();
+            if !title.is_empty() {
+                return Some(title.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn current_timestamp() -> u64 {

@@ -1,84 +1,179 @@
+<div align="center">
+
 ![Blackbird](assets/blackbird-title.png)
 
-A multi-platform application for writing, organizing, and analyzing docs and data.
 
-![Demo](docs/blackbird-demo.gif)
+### Build The App You Need, When You Need It, In Less Than A Minute
 
-## About
+![Blackbird Demo](docs/blackbird-ios-demo.gif)
 
-Blackbird is a simple and elegant AI chat application that runs on desktop, web, and mobile. It provides a clean interface for interacting with local and remote AI models and managing your conversations.
+[![Rust](https://img.shields.io/badge/Rust-2024_Edition-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![Dioxus](https://img.shields.io/badge/Dioxus-0.6.3-blue?style=flat-square)](https://dioxuslabs.com/)
+[![Powered by Cerebras](https://img.shields.io/badge/Powered_by-Cerebras-red?style=flat-square)](https://cerebras.ai/)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-iOS%20%7C%20Desktop%20%7C%20Web-purple?style=flat-square)]()
+
+**Build interactive apps with natural language. No coding required.**
+
+[Getting Started](#getting-started) • [Features](#features) • [Architecture](ARCHITECTURE.md) • [Contributing](#contributing)
+
+</div>
+
+---
+
+## What is Blackbird?
+
+Blackbird is a cross-platform AI application that lets you **create fully functional interactive apps just by describing them**. Simply tell Blackbird what you want to build—a calculator, a todo list, a game, a data visualization—and watch as it generates a complete working application in real-time.
+
+Built with Rust and the Dioxus framework, Blackbird runs natively on iOS, desktop, and web, delivering a fast and seamless experience across all your devices.
+
+---
+
+## Lightning Fast with Cerebras
+
+Blackbird is powered by [Cerebras](https://cerebras.ai/) inference, delivering **~2,000 tokens per second**—that's roughly **20x faster** than traditional cloud AI providers. What does this mean for you?
+
+- **Apps generate in seconds**, not minutes
+- **Iterate instantly**—ask for changes and see them applied immediately
+- **No waiting around**—the AI keeps up with your ideas
+
+This speed transforms the creative process. Instead of waiting for the AI to finish, you're having a real-time conversation with your app as it evolves.
+
+---
 
 ## Features
 
-*   **AI Chat:** A beautiful and intuitive chat interface for interacting with AI models.
-*   **Saved Documents:** Save and manage your conversations and other documents.
-*   **Theming:** Customize the look and feel of the application with light, dark, and octane themes.
-*   **Multi-platform:** Runs on Windows, macOS, Linux, iOS, Android, and the web.
+### 🛠️ **AI Workbench**
+The heart of Blackbird. Describe any app you can imagine and watch it come to life:
+- **Real-time streaming** — See your app being built character by character
+- **Live preview** — Interact with your creation instantly as it generates
+- **Intelligent extraction** — Auto-generates titles and tags from your apps
+- **Conversation history** — Refine and iterate on your creations
+
+### 📱 **Apps Gallery**
+Your personal collection of AI-generated applications:
+- **Persistent storage** — Apps are saved locally and available offline
+- **Full-screen mode** — Launch apps in an immersive, distraction-free view
+- **Smart organization** — Sort by date or name, filter by tags
+- **Quick management** — Delete apps you no longer need
+
+### 🎨 **Theming**
+Make Blackbird yours:
+- **Dark Mode** — Easy on the eyes
+- **Light Mode** — Clean and bright
+- **Octane** — Vibrant orange for those who like to stand out
+
+### 🔧 **Blackbird SDK**
+Every generated app has access to powerful built-in APIs:
+```javascript
+// Persistent storage that survives app restarts
+await blackbird.storage.set('highScore', 9001);
+const score = await blackbird.storage.get('highScore');
+
+// Each app gets its own isolated storage namespace
+await blackbird.storage.keys(); // List all saved data
+```
+
+---
 
 ## Getting Started
 
-To get started with Blackbird, you'll need to have Rust and the appropriate build tools for your target platform installed.
-
 ### Prerequisites
 
-*   [Rust](https://www.rust-lang.org/tools/install)
+- [Rust](https://rustup.rs/) (2024 Edition)
+- [Dioxus CLI](https://dioxuslabs.com/learn/0.6/getting_started): `cargo install dioxus-cli`
+- An API key from one of the supported providers
 
-### Building and Running
+### Installation
 
-1.  **Clone the repository:**
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/blackbird.git
+cd blackbird
 
-    ```bash
-    git clone https://github.com/joabar/blackbird.git
-    cd blackbird
-    ```
+# Copy the environment template
+cp .env.example .env
 
-2.  **Create a `.env` file:**
+# Add your API key to .env
+# CEREBRAS_API_KEY=...  (recommended - fastest)
+# or OPENAI_API_KEY=sk-...
+# or ANTHROPIC_API_KEY=...
+```
 
-    Copy the `.env.example` file to `.env` and add your AI provider's API key.
+### Running Blackbird
 
-    ```bash
-    cp .env.example .env
-    ```
+```bash
+# Desktop
+dx serve --platform desktop
 
-3.  **Build and run for your target platform:**
+# Web
+dx serve --platform web
 
-    *   **Desktop:**
+# iOS (requires Xcode)
+dx serve --platform ios
+```
 
-        ```bash
-        # Install the Dioxus CLI
-        cargo install dioxus-cli
+### Building for Production
 
-        # Run the desktop app
-        dioxus serve --platform desktop
-        ```
+```bash
+# Desktop release build
+dx build --release --platform desktop
 
-    *   **Web:**
+# iOS release (see docs/IOS_DEPLOYMENT.md for full guide)
+dx bundle --platform ios
+```
 
-        ```bash
-        # Install the Dioxus CLI
-        cargo install dioxus-cli
+---
 
-        # Run the web app
-        dioxus serve --platform web
-        ```
+## Supported AI Providers
 
-    *   **Mobile:**
+Blackbird intelligently detects which provider to use based on available API keys:
 
-        Follow the Dioxus documentation for setting up your mobile development environment: [Dioxus Mobile Docs](https://dioxuslabs.com/docs/0.5/guide/en/getting_started/mobile)
+| Provider | Model | Speed | Environment Variable |
+|----------|-------|-------|---------------------|
+| **Cerebras** (default) | Llama 3.3 70B | ~2,000 tok/s | `CEREBRAS_API_KEY` |
+| **OpenAI** | GPT-4o | ~100 tok/s | `OPENAI_API_KEY` |
+| **Anthropic** | Claude 3.5 Sonnet | ~80 tok/s | `ANTHROPIC_API_KEY` |
+| **Ollama** | LLaMA (local) | Varies | `OLLAMA_HOST` |
 
-## Built With
+> **Why Cerebras?** Their custom wafer-scale chips deliver inference speeds that make real-time app generation actually feel real-time. [Learn more](https://cerebras.ai/)
 
-*   [Rust](https://www.rust-lang.org/) - Join the [Community](https://www.rust-lang.org/community)
-*   [Dioxus](https://dioxuslabs.com/) - Join the [Discord](https://discord.gg/XgGxMSkv3M) and check out [Awesome Dioxus](https://github.com/DioxusLabs/awesome-dioxus)
-*   [Tokio](https://tokio.rs/) - Join the [Discord](https://discord.gg/tokio)
-*   [Serde](https://serde.rs/) - Join the [Discord](https://discord.gg/serde)
-*   [Reqwest](https://docs.rs/reqwest/latest/reqwest/) - Join the [Discord](https://discord.gg/rust-lang-community)
-*   [Ollama](https://ollama.ai/) - Join the [Discord](https://discord.gg/ollama)
+---
 
-## Author
+## Project Structure
 
-*   **Alessandro Joabar** - [@joabzzz](https://github.com/joabzzz)
+```
+blackbird/
+├── src/
+│   ├── ai/           # AI client and provider integrations
+│   ├── views/        # UI views (Workbench, Apps, Settings)
+│   ├── tools/        # AI function calling tools
+│   ├── bridge.rs     # Blackbird SDK injection
+│   ├── theme.rs      # Theming system
+│   └── ui.rs         # Main app component
+├── assets/           # Bundled assets and styles
+├── ios/              # iOS Xcode project
+└── docs/             # Documentation and media
+```
+
+For a deep dive into the architecture, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

@@ -2,12 +2,12 @@
 ///
 /// This module contains all the tools that can be called by the AI agent
 /// to interact with the application and perform actions.
+pub mod apps;
 pub mod calculator;
-pub mod docs;
 pub mod settings;
 
+pub use apps::{GetAppsListTool, SearchAppsTool};
 pub use calculator::CalculatorTool;
-pub use docs::{GetDocsListTool, SearchDocsTool};
 pub use settings::GetSettingTool;
 
 /// Common error type for all tools

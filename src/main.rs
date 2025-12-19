@@ -1,13 +1,53 @@
+/// Bundled config for mobile builds (iOS/Android)
+const BUNDLED_CONFIG: &str = include_str!("../assets/config.env");
+
 #[cfg(not(target_arch = "wasm32"))]
 fn load_dotenv() {
-    // Load variables from .env if present; ignore errors in prod.
-    let _ = dotenvy::dotenv();
+    // First try to load from .env file (desktop dev)
+    if dotenvy::dotenv().is_ok() {
+        return;
+    }
+
+    // Fall back to bundled config (mobile builds)
+    load_bundled_config();
 }
 
 #[cfg(target_arch = "wasm32")]
-fn load_dotenv() {}
+fn load_dotenv() {
+    load_bundled_config();
+}
+
+fn load_bundled_config() {
+    for line in BUNDLED_CONFIG.lines() {
+        let line = line.trim();
+        // Skip comments and empty lines
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Parse KEY=VALUE
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+            // Only set if not already set (allow env override)
+            if std::env::var(key).is_err() {
+                // SAFETY: We're setting env vars at startup before any threads are spawned
+                unsafe {
+                    std::env::set_var(key, value);
+                }
+            }
+        }
+    }
+}
 
 fn main() {
+    // Initialize logging
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_target(true)
+        .init();
+
+    tracing::info!("Blackbird starting...");
+
     load_dotenv();
     dioxus::launch(blackbird::ui::App);
 }

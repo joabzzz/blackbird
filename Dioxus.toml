@@ -1,4 +1,5 @@
 [application]
+asset_dir = "./assets"
 
 [web.app]
 
@@ -19,3 +20,8 @@ script = []
 # Javascript code file
 # serve: [dev-server] only
 script = []
+
+[bundle]
+publisher = "A13 Studios LLC"
+identifier = "com.a13studios.blackbird"
+icon = ["./assets/icon.png"]

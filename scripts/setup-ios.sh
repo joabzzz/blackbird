@@ -13,7 +13,6 @@ set -e
 # Configuration - modify these for your app
 APP_NAME="Blackbird"
 APP_NAME_LOWER="blackbird"
-BUNDLE_ID="com.a13studios.blackbird"
 TEAM_ID='""'  # Leave empty quotes for automatic, or set your Team ID like 'ABCD1234'
 MIN_IOS_VERSION="15.0"
 APP_VERSION="0.1.0"
@@ -22,6 +21,12 @@ APP_VERSION="0.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 IOS_DIR="$PROJECT_ROOT/ios"
+
+# Load bundle ID from .env if available, otherwise use default
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    source "$PROJECT_ROOT/.env" 2>/dev/null || true
+fi
+BUNDLE_ID="${IOS_BUNDLE_ID:-com.example.blackbird}"
 
 echo "Setting up iOS Xcode project for $APP_NAME..."
 echo "Project root: $PROJECT_ROOT"

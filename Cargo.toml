@@ -1,6 +1,6 @@
 [package]
 name = "blackbird"
-version = "0.1.0"
+version = "0.1.0-alpha"
 authors = ["Alessandro Joabar <ale@joabar.ai>"]
 edition = "2024"
 

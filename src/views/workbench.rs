@@ -1,4 +1,5 @@
 use crate::ai::{chat_reply_stream_poll, chat_reply_stream_start};
+use crate::bridge;
 use crate::types::{ChatMessage, Role, ThemeMode};
 use crate::views::shared::{SavedApp, persist_app};
 use dioxus::events::Key;
@@ -142,21 +143,146 @@ RULES:
 5. Include a <title> tag.
 6. End with: [[app_tags: Tag1, Tag2]]
 
-Example structure:
+## BLACKBIRD SDK
+
+Every app has access to `window.blackbird` - a SDK for persistent storage.
+
+### Storage API (Persistent, App-Isolated)
+Data persists across app reloads. Each app has isolated storage.
+
+```javascript
+// Save data (auto-serializes objects/arrays to JSON)
+blackbird.storage.set('todos', [{text: 'Buy milk', done: false}]);
+
+// Load data (auto-parses JSON)
+const todos = blackbird.storage.get('todos'); // Returns array or null
+
+// Delete a key
+blackbird.storage.delete('todos');
+
+// List all keys
+const keys = blackbird.storage.keys(); // ['todos', 'settings', ...]
+
+// Clear all app storage
+blackbird.storage.clear();
+```
+
+### SDK Ready Event
+```javascript
+window.addEventListener('blackbird:ready', () => {
+  // SDK is loaded and ready
+  const saved = blackbird.storage.get('data');
+});
+```
+
+## CDN LIBRARIES
+
+For rich apps, use CDN-hosted libraries:
+
+### Charts (Chart.js)
+```html
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+```
+
+### 3D Graphics (Three.js)
+```html
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+```
+
+### Data Visualization (D3.js)
+```html
+<script src="https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js"></script>
+```
+
+### Animation (GSAP)
+```html
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.4/dist/gsap.min.js"></script>
+```
+
+### Creative Coding (p5.js)
+```html
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+```
+
+## EXAMPLE: Todo App with Persistence
+
+```html
 <!DOCTYPE html>
 <html>
 <head>
-    <title>My App</title>
+    <title>Todo List</title>
     <style>
-        .container { /* your styles using var(--text), var(--bg), etc */ }
+        .container { max-width: 400px; margin: 0 auto; }
+        .todo { display: flex; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); }
+        .todo.done span { text-decoration: line-through; opacity: 0.6; }
+        input[type="text"] { flex: 1; }
     </style>
 </head>
 <body>
-    <div class="container">...</div>
-    <script>// your code</script>
+    <div class="container">
+        <h1>My Todos</h1>
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+            <input type="text" id="input" placeholder="Add todo...">
+            <button onclick="addTodo()">Add</button>
+        </div>
+        <div id="list"></div>
+    </div>
+    <script>
+        let todos = [];
+
+        function init() {
+            todos = blackbird.storage.get('todos') || [];
+            render();
+        }
+
+        function save() {
+            blackbird.storage.set('todos', todos);
+        }
+
+        function addTodo() {
+            const input = document.getElementById('input');
+            if (input.value.trim()) {
+                todos.push({text: input.value, done: false});
+                input.value = '';
+                save();
+                render();
+            }
+        }
+
+        function toggle(i) {
+            todos[i].done = !todos[i].done;
+            save();
+            render();
+        }
+
+        function remove(i) {
+            todos.splice(i, 1);
+            save();
+            render();
+        }
+
+        function render() {
+            document.getElementById('list').innerHTML = todos.map((t, i) => `
+                <div class="todo ${t.done ? 'done' : ''}">
+                    <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggle(${i})">
+                    <span style="flex:1">${t.text}</span>
+                    <button onclick="remove(${i})">×</button>
+                </div>
+            `).join('');
+        }
+
+        // Wait for SDK to be ready
+        if (window.blackbird) {
+            init();
+        } else {
+            window.addEventListener('blackbird:ready', init);
+        }
+    </script>
 </body>
 </html>
-[[app_tags: Utility]]
+```
+
+[[app_tags: Utility, Productivity]]
 "#;
 
 #[component]
@@ -278,8 +404,12 @@ fn AppRenderer(
     let tags = state.current_tags();
     let theme_css = app_theme_css(theme());
 
-    // Inject theme CSS into the HTML
-    let themed_html = inject_theme_css(&html, theme_css);
+    // Generate a stable app ID based on content hash for the preview
+    // This will be replaced with the actual file path when saved
+    let app_id = format!("preview-{}", simple_hash(&html));
+
+    // Inject theme CSS and Blackbird SDK into the HTML
+    let themed_html = inject_theme_and_sdk(&html, theme_css, &app_id);
 
     let on_save = move |_| {
         let content = html_for_save.clone();
@@ -539,6 +669,14 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// Simple hash for generating stable app IDs
+fn simple_hash(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut hasher);
+    hasher.finish()
+}
+
 fn extract_html_content(content: &str) -> String {
     if let Some(start) = content.find("```html") {
         let after = start + 7;
@@ -617,5 +755,20 @@ fn inject_theme_css(html: &str, theme_css: &str) -> String {
         }
     } else {
         format!("<style>{}</style>{}", theme_css, html)
+    }
+}
+
+/// Inject both theme CSS and the Blackbird SDK into app HTML
+fn inject_theme_and_sdk(html: &str, theme_css: &str, app_id: &str) -> String {
+    let sdk_script = bridge::get_sdk_script(app_id);
+    let themed = inject_theme_css(html, theme_css);
+
+    // Insert SDK script before </body> or at the end
+    if let Some(pos) = themed.to_lowercase().rfind("</body>") {
+        format!("{}{}{}", &themed[..pos], sdk_script, &themed[pos..])
+    } else if let Some(pos) = themed.to_lowercase().rfind("</html>") {
+        format!("{}{}{}", &themed[..pos], sdk_script, &themed[pos..])
+    } else {
+        format!("{}{}", themed, sdk_script)
     }
 }

@@ -60,6 +60,15 @@
 * {
   box-sizing: border-box;
 }
+
+/* Hide scrollbars globally while keeping scroll functionality */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+*::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
 body {
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
@@ -1284,7 +1293,7 @@ body {
 }
 
 .app-card-preview {
-  height: 160px;
+  height: 100px;
   background: #fff;
   overflow: hidden;
   pointer-events: none;
@@ -1444,18 +1453,25 @@ body {
 }
 
 .booted-app-close {
-  position: absolute;
-  top: var(--spacing-md);
-  right: var(--spacing-md);
-  z-index: 10;
+  position: fixed;
+  bottom: calc(var(--spacing-lg) + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999;
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   color: var(--color-text-primary);
-  padding: 0.5rem 1rem;
-  border-radius: var(--radius-md);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
   cursor: pointer;
-  font-weight: 600;
-  opacity: 0.9;
+  font-size: 1.5rem;
+  font-weight: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
 }
 .booted-app-close:hover {
   opacity: 1;

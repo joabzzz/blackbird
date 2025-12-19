@@ -1,7 +1,8 @@
+use crate::bridge;
 use crate::types::ThemeMode;
 use crate::views::shared::SavedApp;
 use dioxus::{
-    events::{FormEvent, Key, KeyboardEvent},
+    events::{FormEvent, Key, KeyboardEvent, MouseEvent},
     prelude::*,
 };
 use time::{OffsetDateTime, UtcOffset, format_description::FormatItem, macros::format_description};
@@ -158,6 +159,21 @@ fn inject_theme_css(html: &str, theme_css: &str) -> String {
     }
 }
 
+/// Inject both theme CSS and the Blackbird SDK into app HTML
+fn inject_theme_and_sdk(html: &str, theme_css: &str, app_id: &str) -> String {
+    let sdk_script = bridge::get_sdk_script(app_id);
+    let themed = inject_theme_css(html, theme_css);
+
+    // Insert SDK script before </body> or at the end
+    if let Some(pos) = themed.to_lowercase().rfind("</body>") {
+        format!("{}{}{}", &themed[..pos], sdk_script, &themed[pos..])
+    } else if let Some(pos) = themed.to_lowercase().rfind("</html>") {
+        format!("{}{}{}", &themed[..pos], sdk_script, &themed[pos..])
+    } else {
+        format!("{}{}", themed, sdk_script)
+    }
+}
+
 const APP_DATE_FORMAT: &[FormatItem<'static>] =
     format_description!("[month repr:short] [day padding:zero], [year]");
 
@@ -170,28 +186,10 @@ enum AppSort {
 
 #[component]
 pub fn AppsView(saved_apps: Signal<Vec<SavedApp>>, theme: Signal<ThemeMode>) -> Element {
-    let mut selected_app_id = use_signal(|| Option::<String>::None);
     let mut sort_mode = use_signal(|| AppSort::Newest);
     let mut tag_filter = use_signal(|| Option::<String>::None);
     let mut delete_confirm_id = use_signal(|| Option::<String>::None);
     let mut booted_app = use_signal(|| Option::<SavedApp>::None);
-
-    {
-        let saved_apps = saved_apps;
-        let mut selected_app_id = selected_app_id;
-        use_effect(move || {
-            let apps = saved_apps();
-            let should_clear = selected_app_id.with(|selection| {
-                selection
-                    .as_ref()
-                    .map(|id| !apps.iter().any(|app| &app.id == id))
-                    .unwrap_or(false)
-            });
-            if should_clear {
-                selected_app_id.set(None);
-            }
-        });
-    }
 
     let apps = saved_apps();
 
@@ -221,29 +219,23 @@ pub fn AppsView(saved_apps: Signal<Vec<SavedApp>>, theme: Signal<ThemeMode>) -> 
         }
     }
 
-    let current_selection = selected_app_id();
-    let selected_app = current_selection
-        .as_ref()
-        .and_then(|id| display_apps.iter().find(|app| &app.id == id))
-        .cloned();
-
     rsx! {
         div { class: "main-container apps-container",
             // Booted app fullscreen view
             if let Some(app) = booted_app() {
                 {
                     let theme_css = app_theme_css(theme());
-                    let themed_content = inject_theme_css(&app.content, theme_css);
+                    let themed_content = inject_theme_and_sdk(&app.content, theme_css, &app.id);
                     rsx! {
                         div { class: "booted-app-overlay",
-                            button {
-                                class: "booted-app-close",
-                                onclick: move |_| booted_app.set(None),
-                                "Exit"
-                            }
                             iframe {
                                 class: "booted-app-frame",
                                 srcdoc: "{themed_content}",
+                            }
+                            button {
+                                class: "booted-app-close",
+                                onclick: move |_| booted_app.set(None),
+                                dangerous_inner_html: "&times;"
                             }
                         }
                     }
@@ -306,20 +298,24 @@ pub fn AppsView(saved_apps: Signal<Vec<SavedApp>>, theme: Signal<ThemeMode>) -> 
                         for app in display_apps.iter().cloned() {
                             div {
                                 key: "{app.id}",
-                                class: format_args!(
-                                    "app-card {}",
-                                    if selected_app
-                                        .as_ref()
-                                        .is_some_and(|selected| selected.id == app.id) { "active" } else { "" }
-                                ),
+                                class: "app-card",
                                 role: "button",
                                 tabindex: "0",
+                                // Tap/click boots the app directly
                                 onclick: {
+                                    let app_clone = app.clone();
+                                    move |_| booted_app.set(Some(app_clone.clone()))
+                                },
+                                // Right-click/long-press shows delete option
+                                oncontextmenu: {
                                     let app_id = app.id.clone();
-                                    move |_| selected_app_id.set(Some(app_id.clone()))
+                                    move |evt: MouseEvent| {
+                                        evt.prevent_default();
+                                        delete_confirm_id.set(Some(app_id.clone()));
+                                    }
                                 },
                                 onkeydown: {
-                                    let app_id = app.id.clone();
+                                    let app_clone = app.clone();
                                     move |evt: KeyboardEvent| {
                                         let key = evt.key();
                                         let activate = match key {
@@ -330,7 +326,7 @@ pub fn AppsView(saved_apps: Signal<Vec<SavedApp>>, theme: Signal<ThemeMode>) -> 
                                         if activate {
                                             evt.stop_propagation();
                                             evt.prevent_default();
-                                            selected_app_id.set(Some(app_id.clone()));
+                                            booted_app.set(Some(app_clone.clone()));
                                         }
                                     }
                                 },
@@ -349,67 +345,6 @@ pub fn AppsView(saved_apps: Signal<Vec<SavedApp>>, theme: Signal<ThemeMode>) -> 
                                         }
                                     }
                                     span { class: "app-card-date", "{app_saved_date(app.created_at)}" }
-                                }
-                            }
-                        }
-                    }
-                }
-                // App viewer overlay
-                if let Some(app) = selected_app {
-                    {
-                        let theme_css = app_theme_css(theme());
-                        let viewer_themed_content = inject_theme_css(&app.content, theme_css);
-                        rsx! {
-                            div { class: "app-overlay", role: "dialog", aria_modal: "true",
-                                onclick: move |_| selected_app_id.set(None),
-                                div {
-                                    class: "app-overlay-panel",
-                                    onclick: move |evt| evt.stop_propagation(),
-                                    header { class: "app-overlay-header",
-                                        h2 { class: "app-viewer-title", "{app.title}" }
-                                        div { class: "app-overlay-actions",
-                                            button {
-                                                class: "btn btn-primary",
-                                                onclick: {
-                                                    let app_clone = app.clone();
-                                                    move |_| {
-                                                        booted_app.set(Some(app_clone.clone()));
-                                                        selected_app_id.set(None);
-                                                    }
-                                                },
-                                                "Launch"
-                                            }
-                                            button {
-                                                class: "btn btn-danger",
-                                                onclick: {
-                                                    let app_id = app.id.clone();
-                                                    move |_| delete_confirm_id.set(Some(app_id.clone()))
-                                                },
-                                                "Delete"
-                                            }
-                                            button {
-                                                class: "app-overlay-close btn-ghost",
-                                                r#type: "button",
-                                                onclick: move |_| selected_app_id.set(None),
-                                                aria_label: "Close app",
-                                                dangerous_inner_html: "&times;"
-                                            }
-                                        }
-                                    }
-                                    if !app.tags.is_empty() {
-                                        div { class: "app-overlay-tags",
-                                            for tag in app.tags.iter() {
-                                                span { class: "tag-pill tag-pill-compact", "{tag}" }
-                                            }
-                                        }
-                                    }
-                                    p { class: "app-viewer-date", "Saved {app_saved_date(app.created_at)}" }
-                                    div { class: "app-viewer-content",
-                                        iframe {
-                                            class: "app-viewer-iframe",
-                                            srcdoc: "{viewer_themed_content}",
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -438,7 +373,6 @@ pub fn AppsView(saved_apps: Signal<Vec<SavedApp>>, theme: Signal<ThemeMode>) -> 
                                     saved_apps.with_mut(|apps| {
                                         apps.retain(|a| a.id != app_id);
                                     });
-                                    selected_app_id.set(None);
                                     delete_confirm_id.set(None);
                                 },
                                 "Delete"

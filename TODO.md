@@ -1,7 +1,6 @@
-# Workbench View
-* can we have a clear chat button with an are you sure overlay when pressed? Sometimes it's nice to start overlay
-* Let's have the build button be 1) matching the height of the message bar
+Build me a AI recipe generator app where I give a recipe name and it tells me how to make it
 
-# App View
-* Can we have an option to delete apps and organize them in folders?
-* Can we have an option to boot a saved app so I can use it?
+# Apps
+* Tapping an app should just boot it. 
+* For app details, delete menu should only come up if the app has click (or tap hold on the app)* let's make the app views a bit smaller
+* let's have the apps, when booted, take up the whole screen. A minimalist X at bottom middle exits the app and goes back to the views

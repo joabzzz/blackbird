@@ -40,6 +40,14 @@ fn load_bundled_config() {
 }
 
 fn main() {
+    // Initialize logging
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_target(true)
+        .init();
+
+    tracing::info!("Blackbird starting...");
+
     load_dotenv();
     dioxus::launch(blackbird::ui::App);
 }

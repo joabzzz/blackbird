@@ -32,7 +32,7 @@ pub fn App() -> Element {
         if show_splash() {
             SplashScreen {}
         }
-        AppHeader { active_tab, theme: theme() }
+        AppHeader { active_tab }
         TabPanels {
             active_tab,
             saved_apps,
@@ -66,12 +66,10 @@ fn ThemeStyles(base_font_px: Signal<i32>, theme: Signal<ThemeMode>) -> Element {
 }
 
 #[component]
-fn AppHeader(active_tab: Signal<AppTab>, theme: ThemeMode) -> Element {
-    let theme = theme_definition(theme);
+fn AppHeader(active_tab: Signal<AppTab>) -> Element {
     rsx! {
         div { class: "header no-divider",
             div { class: "header-content",
-                img { class: "{theme.wordmark_class}", src: SPLASH_TITLE, alt: "Blackbird" }
                 TabNavigation { active_tab }
             }
         }

@@ -12,3 +12,6 @@ cache/
 
 TODO.md
 config.env
+
+# iOS - Generated Xcode project (regenerate with scripts/setup-ios.sh)
+/ios/

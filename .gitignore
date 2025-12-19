@@ -16,3 +16,4 @@ TODO.md
 
 # iOS - Generated Xcode project (regenerate with scripts/setup-ios.sh)
 /ios/
+.claude

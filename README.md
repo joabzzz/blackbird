@@ -3,12 +3,13 @@
 ![Blackbird](assets/blackbird-title.png)
 
 
-### Build The App You Need When You Need It
+### Build The App You Need, When You Need It, In Less Than A Minute
 
 ![Blackbird Demo](docs/blackbird-ios-demo.gif)
 
 [![Rust](https://img.shields.io/badge/Rust-2024_Edition-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Dioxus](https://img.shields.io/badge/Dioxus-0.6.3-blue?style=flat-square)](https://dioxuslabs.com/)
+[![Powered by Cerebras](https://img.shields.io/badge/Powered_by-Cerebras-red?style=flat-square)](https://cerebras.ai/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-iOS%20%7C%20Desktop%20%7C%20Web-purple?style=flat-square)]()
 
@@ -25,6 +26,18 @@
 Blackbird is a cross-platform AI application that lets you **create fully functional interactive apps just by describing them**. Simply tell Blackbird what you want to build—a calculator, a todo list, a game, a data visualization—and watch as it generates a complete working application in real-time.
 
 Built with Rust and the Dioxus framework, Blackbird runs natively on iOS, desktop, and web, delivering a fast and seamless experience across all your devices.
+
+---
+
+## Lightning Fast with Cerebras
+
+Blackbird is powered by [Cerebras](https://cerebras.ai/) inference, delivering **~2,000 tokens per second**—that's roughly **20x faster** than traditional cloud AI providers. What does this mean for you?
+
+- **Apps generate in seconds**, not minutes
+- **Iterate instantly**—ask for changes and see them applied immediately
+- **No waiting around**—the AI keeps up with your ideas
+
+This speed transforms the creative process. Instead of waiting for the AI to finish, you're having a real-time conversation with your app as it evolves.
 
 ---
 
@@ -82,9 +95,9 @@ cd blackbird
 cp .env.example .env
 
 # Add your API key to .env
-# OPENAI_API_KEY=sk-...
+# CEREBRAS_API_KEY=...  (recommended - fastest)
+# or OPENAI_API_KEY=sk-...
 # or ANTHROPIC_API_KEY=...
-# or BLACKBIRD_API_KEY=...
 ```
 
 ### Running Blackbird
@@ -116,12 +129,14 @@ dx bundle --platform ios
 
 Blackbird intelligently detects which provider to use based on available API keys:
 
-| Provider | Model | Environment Variable |
-|----------|-------|---------------------|
-| **Blackbird** (default) | Custom | `BLACKBIRD_API_KEY` |
-| **OpenAI** | GPT-4o | `OPENAI_API_KEY` |
-| **Anthropic** | Claude 3.5 Sonnet | `ANTHROPIC_API_KEY` |
-| **Ollama** | LLaMA (local) | `OLLAMA_HOST` |
+| Provider | Model | Speed | Environment Variable |
+|----------|-------|-------|---------------------|
+| **Cerebras** (default) | Llama 3.3 70B | ~2,000 tok/s | `CEREBRAS_API_KEY` |
+| **OpenAI** | GPT-4o | ~100 tok/s | `OPENAI_API_KEY` |
+| **Anthropic** | Claude 3.5 Sonnet | ~80 tok/s | `ANTHROPIC_API_KEY` |
+| **Ollama** | LLaMA (local) | Varies | `OLLAMA_HOST` |
+
+> **Why Cerebras?** Their custom wafer-scale chips deliver inference speeds that make real-time app generation actually feel real-time. [Learn more](https://cerebras.ai/)
 
 ---
 
